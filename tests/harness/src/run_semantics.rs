@@ -23,7 +23,7 @@ fn valid_run(temp: &TempDir) -> (Workspace, InstrumentRun) {
             "raw_stream_capture",
         )
         .unwrap();
-    let native_source = temp.path().join("native.exe");
+    let native_source = temp.path().join("ewb-test-native.exe");
     fs::write(&native_source, b"native fixture").unwrap();
     let native_snapshot = workspace
         .import_artifact(
@@ -107,7 +107,7 @@ fn valid_run(temp: &TempDir) -> (Workspace, InstrumentRun) {
             supporting_files_sha256: None,
             supporting_file_count: 0,
             reported_version: None,
-            source_path: "C:\\source\\ewb-test-native.exe".to_owned(),
+            source_path: native_source.display().to_string(),
             snapshot_artifact_id: native_snapshot.artifact_id,
         },
         recorder_identity: RecorderIdentity {
