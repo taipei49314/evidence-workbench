@@ -333,7 +333,8 @@ fn upstream_registry_projects_twelve_production_pins_without_authority_or_shared
         .iter()
         .filter(|row| row["upstream_pin"]["execution_readiness"]["state"] == "ready")
         .collect::<Vec<_>>();
-    assert!(ready.is_empty());
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0]["manifest_id"], "tomorrowci-lab");
 
     let temp = TempDir::new().unwrap();
     let (code, initialized, stderr) = run_json(
@@ -641,7 +642,7 @@ fn phaseledger_without_capsule_fails_before_importing_subject_or_plan() {
 }
 
 #[test]
-fn admitted_native_delivery_rejects_same_name_with_different_bytes() {
+fn qualified_native_delivery_rejects_plan_without_durable_qualification() {
     let temp = TempDir::new().unwrap();
     init(temp.path());
     let fake_dir = temp.path().join("fake-bin");
@@ -659,13 +660,13 @@ fn admitted_native_delivery_rejects_same_name_with_different_bytes() {
         failure["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("execution adapter is disabled")
+            .contains("--runtime-qualification")
     );
     assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
 }
 
 #[test]
-fn tomorrowci_fails_before_writing_until_vcruntime_closure_is_bound() {
+fn tomorrowci_is_ready_but_still_requires_local_exact_qualification() {
     let temp = TempDir::new().unwrap();
     init(temp.path());
     let before = tree_snapshot(&temp.path().join(".ewb"));
@@ -680,7 +681,7 @@ fn tomorrowci_fails_before_writing_until_vcruntime_closure_is_bound() {
         failure["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("execution adapter is disabled")
+            .contains("--runtime-qualification")
     );
     assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
 
@@ -688,14 +689,11 @@ fn tomorrowci_fails_before_writing_until_vcruntime_closure_is_bound() {
     assert_eq!(code, 0, "{shown:?} {stderr}");
     assert_eq!(
         shown["data"]["upstream_pin"]["execution_readiness"]["state"],
-        "fail_closed"
+        "ready"
     );
-    assert!(
-        shown["data"]["upstream_pin"]["execution_readiness"]["blocker_codes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|code| code == "unbound_vcruntime140_dll")
+    assert_eq!(
+        shown["data"]["upstream_pin"]["execution_readiness"]["blocker_codes"],
+        json!([])
     );
 }
 
@@ -716,7 +714,7 @@ fn fail_closed_tools_cannot_execute_through_version_probe() {
         failure["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("native probe is disabled")
+            .contains("qualification-gated")
     );
     assert!(!marker.exists());
 

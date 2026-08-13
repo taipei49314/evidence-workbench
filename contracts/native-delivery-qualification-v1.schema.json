@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench native delivery qualification v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "tool_manifest_id", "operation", "upstream_pin_sha256",
+    "source_commit_sha", "source_tree_sha", "workflow_run_id", "actions_artifact_id",
+    "actions_artifact_name", "actions_artifact_container_sha256", "actions_artifact_expires_at",
+    "candidate_status", "promotion_authorized", "authority_effect", "platform", "files", "pe_imports", "declared_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "native_delivery_qualification/v1" },
+    "tool_manifest_id": { "const": "tomorrowci-lab" },
+    "operation": { "const": "tomorrowci_trust_audit" },
+    "upstream_pin_sha256": { "$ref": "#/$defs/sha256" },
+    "source_commit_sha": { "$ref": "#/$defs/git_sha" },
+    "source_tree_sha": { "$ref": "#/$defs/git_sha" },
+    "workflow_run_id": { "$ref": "#/$defs/decimal" },
+    "actions_artifact_id": { "$ref": "#/$defs/decimal" },
+    "actions_artifact_name": { "const": "release-candidate-dist-attempt-1" },
+    "actions_artifact_container_sha256": { "$ref": "#/$defs/sha256" },
+    "actions_artifact_expires_at": { "type": "string", "format": "date-time" },
+    "candidate_status": { "const": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED" },
+    "promotion_authorized": { "const": false },
+    "authority_effect": { "const": "none" },
+    "platform": {
+      "type": "object", "additionalProperties": false,
+      "required": ["os", "arch", "minimum_version", "module_resolution"],
+      "properties": {
+        "os": { "const": "windows" }, "arch": { "const": "x86_64" },
+        "minimum_version": { "const": "10.0" },
+        "module_resolution": { "const": "windows_os_loader_api_set_boundary" }
+      }
+    },
+    "files": {
+      "type": "array", "minItems": 5, "maxItems": 5,
+      "allOf": [
+        { "contains": { "$ref": "#/$defs/candidate_manifest" }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "$ref": "#/$defs/checksum_ledger" }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "$ref": "#/$defs/windows_archive" }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "$ref": "#/$defs/windows_executable" }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "$ref": "#/$defs/pe_import_report" }, "minContains": 1, "maxContains": 1 }
+      ],
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/candidate_manifest" }, { "$ref": "#/$defs/checksum_ledger" },
+          { "$ref": "#/$defs/windows_archive" }, { "$ref": "#/$defs/windows_executable" },
+          { "$ref": "#/$defs/pe_import_report" }
+        ]
+      }
+    },
+    "pe_imports": {
+      "type": "object", "additionalProperties": false,
+      "required": ["verifier_contract_id", "verifier_contract_sha256", "imports", "prohibited_app_local_names", "report_role"],
+      "properties": {
+        "verifier_contract_id": { "const": "evidence-workbench-builtin-pe-parser/v1" },
+        "verifier_contract_sha256": { "const": "4f3f1b06c9f1fba489776059672a516598fab7f67e25f23a88a4582ff029b323" },
+        "imports": { "const": ["API-MS-WIN-CORE-SYNCH-L1-2-0.DLL", "BCRYPTPRIMITIVES.DLL", "KERNEL32.DLL", "NTDLL.DLL"] },
+        "prohibited_app_local_names": { "const": ["API-MS-WIN-CORE-SYNCH-L1-2-0.DLL", "BCRYPTPRIMITIVES.DLL", "DOCKER.EXE", "GIT.EXE", "KERNEL32.DLL", "NTDLL.DLL", "PODMAN.EXE", "VCRUNTIME140.DLL"] },
+        "report_role": { "const": "pe_import_report" }
+      }
+    },
+    "declared_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "git_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "decimal": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+    "qualification_file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "sha256", "byte_length"],
+      "properties": {
+        "role": { "enum": ["candidate_manifest", "checksum_ledger", "windows_archive", "windows_executable", "pe_import_report"] },
+        "path": { "enum": ["candidate-manifest.json", "SHA256SUMS.txt", "tomorrowci-v0.2.0-alpha.1-x86_64-pc-windows-msvc.zip", "tomorrowci.exe", "pe-import-report.json"] },
+        "sha256": { "$ref": "#/$defs/sha256" }, "byte_length": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "candidate_manifest": { "allOf": [{ "$ref": "#/$defs/qualification_file" }, { "properties": { "role": { "const": "candidate_manifest" }, "path": { "const": "candidate-manifest.json" } } }] },
+    "checksum_ledger": { "allOf": [{ "$ref": "#/$defs/qualification_file" }, { "properties": { "role": { "const": "checksum_ledger" }, "path": { "const": "SHA256SUMS.txt" } } }] },
+    "windows_archive": { "allOf": [{ "$ref": "#/$defs/qualification_file" }, { "properties": { "role": { "const": "windows_archive" }, "path": { "const": "tomorrowci-v0.2.0-alpha.1-x86_64-pc-windows-msvc.zip" } } }] },
+    "windows_executable": { "allOf": [{ "$ref": "#/$defs/qualification_file" }, { "properties": { "role": { "const": "windows_executable" }, "path": { "const": "tomorrowci.exe" } } }] },
+    "pe_import_report": { "allOf": [{ "$ref": "#/$defs/qualification_file" }, { "properties": { "role": { "const": "pe_import_report" }, "path": { "const": "pe-import-report.json" } } }] }
+  }
+}

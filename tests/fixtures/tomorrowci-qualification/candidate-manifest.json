@@ -1,0 +1,100 @@
+{
+  "build": {
+    "reproducible_builds": 2,
+    "rust_toolchain": "1.97.1"
+  },
+  "kind": "tomorrowci.release-candidate.v1",
+  "payload": [
+    {
+      "name": "Containerfile",
+      "sha256": "sha256:32cf168f412c70e18b40fea4daab302b78ee83a2bc8ef183b0c4f250f8e8b9d6",
+      "size": 2304
+    },
+    {
+      "name": "build-metadata.json",
+      "sha256": "sha256:89e9b12efb43a3247b21d385c0ac5a303546dcb7bc720ff3d2fde8f56cea59b8",
+      "size": 102623
+    },
+    {
+      "name": "claim-to-evidence.md",
+      "sha256": "sha256:bd1a9c55769d9bb6b904afba3902f0be87d55ea09f28bbcffbc3678b93162939",
+      "size": 14204
+    },
+    {
+      "name": "image-provenance.json",
+      "sha256": "sha256:494da784953b77cd9021d272d2f8a328eb81d4cbcbcf95e8a88cb422c96079cc",
+      "size": 2490
+    },
+    {
+      "name": "image-sbom.cdx.json",
+      "sha256": "sha256:92b72158af6c4bc8b46e9671a55991fe0dd6ab1e5db682205407721c65e41308",
+      "size": 240309
+    },
+    {
+      "name": "image-vulnerabilities.json",
+      "sha256": "sha256:9dc294dc59ddb50ceee3d36069b10518ec7bdde4d043863ae09108824ae0ab8b",
+      "size": 581793
+    },
+    {
+      "name": "qualification-backlog.json",
+      "sha256": "sha256:2f1895078c83335c157487b333291442ef9c13fd06f0cb3074d61a91d09d4dfa",
+      "size": 11498
+    },
+    {
+      "name": "sbom.cdx.json",
+      "sha256": "sha256:0a1a8992448e9ff4a8db6493069dfc360c6e4f3b5cf7f974c94847f463cca56a",
+      "size": 100010
+    },
+    {
+      "name": "support.md",
+      "sha256": "sha256:defca68b9cfc89199587c86a0fb80d14af13fab0ad0c4e2fcce52874739ac3a6",
+      "size": 3136
+    },
+    {
+      "name": "tomorrowci-oci-linux-amd64.tar",
+      "sha256": "sha256:051781a8b966b26c8374be7d5efc994994061a77a04580c1aaf3271a3f3f80c2",
+      "size": 83230720
+    },
+    {
+      "name": "tomorrowci-v0.2.0-alpha.1-aarch64-apple-darwin.tar.gz",
+      "sha256": "sha256:21a23d96a08f8640400b58ea8e6fb0d1fee567661cab6f7fab475cab45716d2c",
+      "size": 1919666
+    },
+    {
+      "name": "tomorrowci-v0.2.0-alpha.1-x86_64-apple-darwin.tar.gz",
+      "sha256": "sha256:3800a3e352e5d4daed71daecdc434d037444d574261aba5e6f715650d384da9f",
+      "size": 2005493
+    },
+    {
+      "name": "tomorrowci-v0.2.0-alpha.1-x86_64-pc-windows-msvc.zip",
+      "sha256": "sha256:c6a72b6a15496cb3de3c016d4bd54c249984d7d3490cc89692d55543fb310533",
+      "size": 1879094
+    },
+    {
+      "name": "tomorrowci-v0.2.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "sha256:ce01259f8c3c571d87907186721a2daa2b840d41dd8a5e43f26d63dcf484eae5",
+      "size": 2118600
+    }
+  ],
+  "promotion": {
+    "authorization_source": null,
+    "authorized": false,
+    "instruction": "Bind detached external authorization to this manifest's SHA-256 digest."
+  },
+  "schema_version": 1,
+  "source": {
+    "commit": "382745e85d2035158cc41fc1c111a512b7957095",
+    "dirty": false,
+    "ref": "refs/heads/master",
+    "repository": "taipei49314/tomorrowci-lab"
+  },
+  "status": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED",
+  "version": "0.2.0-alpha.1",
+  "workflow": {
+    "name": "release-candidate",
+    "run_attempt": 1,
+    "run_id": 31734705578,
+    "run_url": "https://github.com/taipei49314/tomorrowci-lab/actions/runs/31734705578/attempts/1",
+    "workflow_ref": "taipei49314/tomorrowci-lab/.github/workflows/candidate.yml@refs/heads/master"
+  }
+}

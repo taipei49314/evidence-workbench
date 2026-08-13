@@ -1,0 +1,13 @@
+{
+  "schema_version": "pe_import_report/v1",
+  "executable_sha256": "336528ce2702b2bc21b3e15ad2843a05b828e7b39b0cf98a859c249064470cab",
+  "verifier_contract_id": "evidence-workbench-builtin-pe-parser/v1",
+  "verifier_contract_sha256": "4f3f1b06c9f1fba489776059672a516598fab7f67e25f23a88a4582ff029b323",
+  "imports": [
+    "API-MS-WIN-CORE-SYNCH-L1-2-0.DLL",
+    "BCRYPTPRIMITIVES.DLL",
+    "KERNEL32.DLL",
+    "NTDLL.DLL"
+  ],
+  "delay_imports": []
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": "native_delivery_qualification/v1",
+  "tool_manifest_id": "tomorrowci-lab",
+  "operation": "tomorrowci_trust_audit",
+  "upstream_pin_sha256": "b7132bff396848ec622f3e079c8bd54edb5b9ed3485fa435e3672ea77739713a",
+  "source_commit_sha": "382745e85d2035158cc41fc1c111a512b7957095",
+  "source_tree_sha": "3392dfedeac7f5535db5d65523a762d2a1e42126",
+  "workflow_run_id": "31734705578",
+  "actions_artifact_id": "9194935152",
+  "actions_artifact_name": "release-candidate-dist-attempt-1",
+  "actions_artifact_container_sha256": "3e4c9861940b26abdb8603b2ff984b690d53aed27f306e69bd562d5604e97e8a",
+  "actions_artifact_expires_at": "2026-11-11T19:12:57Z",
+  "candidate_status": "CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED",
+  "promotion_authorized": false,
+  "authority_effect": "none",
+  "platform": { "os": "windows", "arch": "x86_64", "minimum_version": "10.0", "module_resolution": "windows_os_loader_api_set_boundary" },
+  "files": [
+    { "role": "candidate_manifest", "path": "candidate-manifest.json", "sha256": "049420200bb855cbb5736f26b173daba161d65c117864279b0737ea98dac3993", "byte_length": 3315 },
+    { "role": "checksum_ledger", "path": "SHA256SUMS.txt", "sha256": "bddb812de929fa2ade701a6300c4450742e35a7977d5ad3b5eca876dbd57b669", "byte_length": 1439 },
+    { "role": "windows_archive", "path": "tomorrowci-v0.2.0-alpha.1-x86_64-pc-windows-msvc.zip", "sha256": "c6a72b6a15496cb3de3c016d4bd54c249984d7d3490cc89692d55543fb310533", "byte_length": 1879094 },
+    { "role": "windows_executable", "path": "tomorrowci.exe", "sha256": "336528ce2702b2bc21b3e15ad2843a05b828e7b39b0cf98a859c249064470cab", "byte_length": 5237760 },
+    { "role": "pe_import_report", "path": "pe-import-report.json", "sha256": "8abae02d7090dd5004dc1a6f48858b091f6c2b7b944b660c9b08d5831542ac15", "byte_length": 451 }
+  ],
+  "pe_imports": {
+    "verifier_contract_id": "evidence-workbench-builtin-pe-parser/v1",
+    "verifier_contract_sha256": "4f3f1b06c9f1fba489776059672a516598fab7f67e25f23a88a4582ff029b323",
+    "imports": ["API-MS-WIN-CORE-SYNCH-L1-2-0.DLL", "BCRYPTPRIMITIVES.DLL", "KERNEL32.DLL", "NTDLL.DLL"],
+    "prohibited_app_local_names": ["API-MS-WIN-CORE-SYNCH-L1-2-0.DLL", "BCRYPTPRIMITIVES.DLL", "DOCKER.EXE", "GIT.EXE", "KERNEL32.DLL", "NTDLL.DLL", "PODMAN.EXE", "VCRUNTIME140.DLL"],
+    "report_role": "pe_import_report"
+  },
+  "declared_at": "2026-08-14T04:00:00Z"
+}

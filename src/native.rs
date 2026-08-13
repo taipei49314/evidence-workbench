@@ -1,10 +1,12 @@
 use crate::contracts::{
     AdapterIdentity, ArtifactDescriptor, BinaryIdentity, InstrumentRun, Invocation, LimitationItem,
-    Limitations, Locator, NativeAuthority, NativeObservation, NativeResult, ObservationSource,
-    RecorderIdentity, Subject, Termination, ToolRef,
+    Limitations, Locator, NativeAuthority, NativeObservation, NativeQualificationRef, NativeResult,
+    ObservationSource, PlanRecordRef, RecorderIdentity, Subject, Termination, ToolRef,
+    UpstreamPinRef,
 };
 use crate::git_subject;
 use crate::manifests::{self, ToolManifest, TrustedManifest};
+use crate::native_qualifications;
 use crate::strict_json;
 use crate::workspace::{self, Workspace};
 use anyhow::{Context, Result, bail};
@@ -69,6 +71,85 @@ struct OwnedEmptyPath {
     path: PathBuf,
 }
 
+#[cfg(windows)]
+fn verify_windows_bare_name_search_surface(invocation: &Invocation) -> Result<()> {
+    use windows_sys::Win32::System::SystemInformation::{
+        GetSystemDirectoryW, GetWindowsDirectoryW,
+    };
+    fn queried_directory(
+        query: unsafe extern "system" fn(*mut u16, u32) -> u32,
+    ) -> Result<PathBuf> {
+        let mut buffer = vec![0u16; 32768];
+        // SAFETY: buffer is writable for its declared length.
+        let length = unsafe { query(buffer.as_mut_ptr(), buffer.len() as u32) };
+        if length == 0 || length as usize >= buffer.len() {
+            bail!("cannot resolve a Windows CreateProcess search directory");
+        }
+        Ok(PathBuf::from(String::from_utf16(
+            &buffer[..length as usize],
+        )?))
+    }
+    let application = Path::new(&invocation.argv[0])
+        .parent()
+        .context("qualified executable has no application directory")?;
+    let current = Path::new(&invocation.cwd);
+    let system = queried_directory(GetSystemDirectoryW)?;
+    let windows = queried_directory(GetWindowsDirectoryW)?;
+    let mut directories = vec![
+        application.to_owned(),
+        current.to_owned(),
+        system.clone(),
+        system.join("downlevel"),
+        windows.join("System"),
+        windows.join("SysWOW64"),
+        windows,
+    ];
+    directories.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+    directories.dedup_by(|left, right| {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    });
+    for directory in directories {
+        if !directory.is_dir() {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&directory)?;
+        if metadata.file_type().is_symlink() || is_windows_reparse(&metadata) {
+            bail!("Windows CreateProcess search directory is a link or reparse point");
+        }
+        for name in ["git.exe", "docker.exe", "podman.exe"] {
+            if directory.join(name).try_exists()? {
+                bail!(
+                    "qualified TomorrowCI operation found ambient {name} on the Windows bare-name search surface"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn canonical_windows_directory() -> Result<PathBuf> {
+    use windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW;
+    let mut buffer = vec![0u16; 32768];
+    // SAFETY: buffer is writable for its declared length.
+    let length = unsafe { GetWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };
+    if length == 0 || length as usize >= buffer.len() {
+        bail!("cannot resolve canonical Windows directory");
+    }
+    let directory = PathBuf::from(String::from_utf16(&buffer[..length as usize])?);
+    let metadata = fs::symlink_metadata(&directory)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_windows_reparse(&metadata) {
+        bail!("canonical Windows directory is not a real directory");
+    }
+    Ok(directory)
+}
+
+#[cfg(not(windows))]
+fn verify_windows_bare_name_search_surface(_invocation: &Invocation) -> Result<()> {
+    Ok(())
+}
+
 impl OwnedEmptyPath {
     fn create(workspace: &Workspace) -> Result<Self> {
         let parent = workspace.state.join("tmp");
@@ -113,7 +194,10 @@ impl Drop for OwnedEmptyPath {
 
 pub struct ExecutionRequest {
     pub run_id: String,
+    pub source_plan_ref: PlanRecordRef,
     pub tool_ref: ToolRef,
+    pub upstream_pin_ref: UpstreamPinRef,
+    pub native_qualification_ref: Option<NativeQualificationRef>,
     pub identity: BinaryIdentity,
     pub recorder: RecorderIdentity,
     pub adapter: AdapterIdentity,
@@ -257,6 +341,197 @@ pub fn snapshot_tool_identity(
     })
 }
 
+pub fn snapshot_qualified_tool_identity(
+    workspace: &Workspace,
+    manifest: &ToolManifest,
+    qualification: &crate::contracts::NativeDeliveryQualificationRecord,
+    plan_id: &str,
+) -> Result<BinaryIdentity> {
+    require_windows_execution_boundary(
+        "qualified native execution planning requires the Windows handle boundary",
+    )?;
+    if manifest.manifest_id != "tomorrowci-lab"
+        || manifest.invocation_contract.operation != "tomorrowci_trust_audit"
+        || qualification.payload.qualification.tool_manifest_id != manifest.manifest_id
+        || qualification.payload.qualification.operation != manifest.invocation_contract.operation
+    {
+        bail!("native qualification cannot be used for this trusted manifest operation");
+    }
+    let executable = native_qualifications::executable_artifact(qualification)?;
+    if !manifest
+        .identity_contract
+        .allowed_binary_sha256
+        .iter()
+        .any(|allowed| allowed == &executable.sha256)
+    {
+        bail!("qualified executable is outside the trusted manifest allowlist");
+    }
+    let (artifact, staged) = workspace.materialize_qualified_application(
+        plan_id,
+        &executable.artifact_id,
+        "tomorrowci.exe",
+    )?;
+    if artifact.digest.value != executable.sha256 || artifact.byte_length != executable.byte_length
+    {
+        bail!("qualified application bytes diverge from the durable qualification record");
+    }
+    Ok(BinaryIdentity {
+        path: staged.display().to_string(),
+        sha256: artifact.digest.value,
+        size_bytes: artifact.byte_length,
+        supporting_files_sha256: None,
+        supporting_file_count: 0,
+        reported_version: None,
+        source_path: "tomorrowci.exe".to_owned(),
+        snapshot_artifact_id: artifact.artifact_id,
+    })
+}
+
+pub fn verify_qualified_application_identity(
+    workspace: &Workspace,
+    identity: &BinaryIdentity,
+    expected_plan_id: Option<&str>,
+) -> Result<()> {
+    let plan_id = qualified_application_plan_id(identity)?;
+    if expected_plan_id.is_some_and(|expected| expected != plan_id) {
+        bail!("qualified application directory does not match its plan ID");
+    }
+    validate_qualified_application_path_shape(workspace, identity, plan_id)?;
+    let executable = Path::new(&identity.path);
+    validate_absolute_inventory_ancestors(executable)?;
+    let application = executable
+        .parent()
+        .context("qualified launcher has no application directory")?;
+    validate_windows_single_link(executable)?;
+    let applications_root = workspace.state.join("staged").join("applications");
+    let digest_root = applications_root.join("sha256");
+    let digest_directory = digest_root.join(&identity.sha256);
+    if application.parent() != Some(digest_directory.as_path())
+        || digest_directory.parent() != Some(digest_root.as_path())
+        || digest_root.parent() != Some(applications_root.as_path())
+        || applications_root.parent() != Some(workspace.state.join("staged").as_path())
+    {
+        bail!("qualified application parent chain is outside the exact EWB hierarchy");
+    }
+    let staged_root = workspace.state.join("staged");
+    for path in [
+        workspace.state.as_path(),
+        staged_root.as_path(),
+        applications_root.as_path(),
+        digest_root.as_path(),
+        digest_directory.as_path(),
+        application,
+        executable,
+    ] {
+        let metadata =
+            fs::symlink_metadata(path).context("cannot inspect qualified application inventory")?;
+        if metadata.file_type().is_symlink() || is_windows_reparse(&metadata) {
+            bail!("qualified application inventory contains a link or reparse point");
+        }
+        if path == executable && !metadata.is_file() {
+            bail!("qualified application launcher is not a regular file");
+        }
+        if path != executable && !metadata.is_dir() {
+            bail!("qualified application parent chain contains a non-directory");
+        }
+    }
+    let entries = fs::read_dir(application)?.collect::<Result<Vec<_>, _>>()?;
+    if entries.len() != 1
+        || entries[0]
+            .file_name()
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            != "tomorrowci.exe"
+        || entries[0].file_name() != std::ffi::OsStr::new("tomorrowci.exe")
+    {
+        bail!(
+            "qualified application inventory must contain only tomorrowci.exe; app-local Git, Docker, Podman, and DLL shims are forbidden"
+        );
+    }
+    let (digest, length) = workspace::digest_file(executable)?;
+    if digest != identity.sha256 || length != identity.size_bytes {
+        bail!("qualified application launcher bytes changed");
+    }
+    Ok(())
+}
+
+fn validate_absolute_inventory_ancestors(executable: &Path) -> Result<()> {
+    if !executable.is_absolute() {
+        bail!("qualified application path must be absolute");
+    }
+    let ancestors = executable.ancestors().collect::<Vec<_>>();
+    for path in ancestors.iter().rev() {
+        let metadata = fs::symlink_metadata(path).with_context(|| {
+            format!("cannot inspect qualified path ancestor {}", path.display())
+        })?;
+        if metadata.file_type().is_symlink() || is_windows_reparse(&metadata) {
+            bail!("qualified application absolute ancestor is a link or reparse point");
+        }
+        if *path == executable {
+            if !metadata.is_file() {
+                bail!("qualified application launcher is not a regular file");
+            }
+        } else if !metadata.is_dir() {
+            bail!("qualified application absolute ancestor is not a directory");
+        }
+    }
+    Ok(())
+}
+
+fn qualified_application_plan_id(identity: &BinaryIdentity) -> Result<&str> {
+    Path::new(&identity.path)
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .context("qualified application plan ID is not UTF-8")
+}
+
+pub fn validate_qualified_application_path_shape(
+    workspace: &Workspace,
+    identity: &BinaryIdentity,
+    expected_plan_id: &str,
+) -> Result<()> {
+    workspace::validate_prefixed_id(expected_plan_id, "plan_")?;
+    if qualified_application_plan_id(identity)? != expected_plan_id {
+        bail!("qualified application directory does not match its source plan ID");
+    }
+    let executable = Path::new(&identity.path);
+    let expected = workspace.qualified_application_executable_path(
+        expected_plan_id,
+        &identity.sha256,
+        "tomorrowci.exe",
+    )?;
+    if executable != expected {
+        bail!("qualified launcher is outside its content-addressed private application directory");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_windows_single_link(path: &Path) -> Result<()> {
+    use std::mem::size_of;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    let file = open_native_read_no_write_share(path)?;
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: file is a live Windows file handle and information is writable.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    if ok == 0 || size_of::<BY_HANDLE_FILE_INFORMATION>() == 0 {
+        bail!("cannot query qualified launcher link identity");
+    }
+    if information.nNumberOfLinks != 1 {
+        bail!("qualified application launcher must be a private single-link copy");
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn validate_windows_single_link(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
 fn require_windows_execution_boundary(message: &str) -> Result<()> {
     if cfg!(windows) {
         Ok(())
@@ -364,7 +639,10 @@ pub fn build_invocation(
                 bail!("TomorrowCI trust adapter only accepts its fixed self subject");
             }
             argv.extend(["trust".to_owned(), "--json".to_owned()]);
-            workspace.root.clone()
+            Path::new(&identity.path)
+                .parent()
+                .context("qualified TomorrowCI launcher has no application directory")?
+                .to_owned()
         }
         other => bail!("unsupported trusted adapter operation: {other}"),
     };
@@ -410,7 +688,10 @@ pub fn execute(
 ) -> Result<InstrumentRun> {
     let ExecutionRequest {
         run_id,
+        source_plan_ref,
         tool_ref,
+        upstream_pin_ref,
+        native_qualification_ref,
         identity,
         recorder,
         adapter,
@@ -503,7 +784,10 @@ pub fn execute(
     Ok(InstrumentRun {
         schema_version: "instrument_run/v1".to_owned(),
         run_id,
+        source_plan_ref,
         tool_ref,
+        upstream_pin_ref,
+        native_qualification_ref,
         resolved_tool_identity: identity,
         recorder_identity: recorder,
         adapter,
@@ -793,6 +1077,15 @@ fn run_direct(
     if invocation.mode != "direct_exec" || invocation.argv.is_empty() {
         bail!("invalid direct invocation");
     }
+    let qualified_identity = if operation == "tomorrowci_trust_audit" {
+        Some(qualified_identity_from_invocation(workspace, invocation)?)
+    } else {
+        None
+    };
+    if let Some(identity) = &qualified_identity {
+        verify_qualified_application_identity(workspace, identity, None)?;
+        verify_windows_bare_name_search_surface(invocation)?;
+    }
     let mut command = Command::new(&invocation.argv[0]);
     command
         .args(&invocation.argv[1..])
@@ -805,6 +1098,10 @@ fn run_direct(
         // populated or replaced path fails closed instead of becoming an
         // executable search surface.
         isolated_path.verify_empty()?;
+    }
+    if let Some(identity) = &qualified_identity {
+        verify_qualified_application_identity(workspace, identity, None)?;
+        verify_windows_bare_name_search_surface(invocation)?;
     }
 
     let stdout_path = workspace
@@ -877,6 +1174,27 @@ fn run_direct(
         }
     };
 
+    if let Some(identity) = &qualified_identity
+        && verify_qualified_application_identity(workspace, identity, None).is_err()
+    {
+        termination = Termination::Interrupted {
+            reason: "qualified_application_inventory_changed".to_owned(),
+        };
+    }
+    if qualified_identity.is_some() && verify_windows_bare_name_search_surface(invocation).is_err()
+    {
+        termination = Termination::Interrupted {
+            reason: "qualified_windows_search_surface_changed".to_owned(),
+        };
+    }
+    if let Some(isolated_path) = &isolated_path
+        && isolated_path.verify_empty().is_err()
+    {
+        termination = Termination::Interrupted {
+            reason: "qualified_empty_path_inventory_changed".to_owned(),
+        };
+    }
+
     sync_file(&stdout_path)?;
     sync_file(&stderr_path)?;
     let output_size = file_length(&stdout_path).saturating_add(file_length(&stderr_path));
@@ -900,6 +1218,24 @@ fn run_direct(
         termination,
         stdout_path: Some(stdout_path),
         stderr_path: Some(stderr_path),
+    })
+}
+
+fn qualified_identity_from_invocation(
+    _workspace: &Workspace,
+    invocation: &Invocation,
+) -> Result<BinaryIdentity> {
+    let path = Path::new(&invocation.argv[0]);
+    let (sha256, size_bytes) = workspace::digest_file(path)?;
+    Ok(BinaryIdentity {
+        path: invocation.argv[0].clone(),
+        sha256,
+        size_bytes,
+        supporting_files_sha256: None,
+        supporting_file_count: 0,
+        reported_version: None,
+        source_path: "tomorrowci.exe".to_owned(),
+        snapshot_artifact_id: "artifact_00000000000000000000000000000000".to_owned(),
     })
 }
 
@@ -1159,12 +1495,28 @@ fn apply_operation_environment(
     }
 
     let empty_path = OwnedEmptyPath::create(workspace)?;
-    command.env("PATH", &empty_path.path);
+    command.env("PATH", single_entry_path_value(&empty_path.path)?);
     #[cfg(windows)]
-    command.env("PATHEXT", ".EXE");
+    {
+        let windows = canonical_windows_directory()?;
+        command
+            .env("PATHEXT", ".EXE")
+            .env("SystemRoot", &windows)
+            .env("WINDIR", &windows);
+    }
     #[cfg(not(windows))]
     command.env_remove("PATHEXT");
     Ok(Some(empty_path))
+}
+
+fn single_entry_path_value(path: &Path) -> Result<OsString> {
+    let value = std::env::join_paths([path])
+        .context("EWB-owned empty PATH cannot be represented as one search entry")?;
+    let entries = std::env::split_paths(&value).collect::<Vec<_>>();
+    if entries.len() != 1 || entries[0] != path {
+        bail!("EWB-owned empty PATH did not round-trip as one exact search entry");
+    }
+    Ok(value)
 }
 
 fn valid_capability(value: &str) -> bool {
@@ -1203,6 +1555,92 @@ mod tests {
         assert!(!valid_capability("read-subject"));
         assert!(!valid_capability("READ_SUBJECT"));
         assert!(!valid_capability("*"));
+    }
+
+    #[test]
+    fn empty_path_encoding_is_exactly_one_search_entry() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let normal = temp.path().join("empty");
+        fs::create_dir(&normal).unwrap();
+        let encoded = single_entry_path_value(&normal).unwrap();
+        assert_eq!(
+            std::env::split_paths(&encoded).collect::<Vec<_>>(),
+            [normal]
+        );
+
+        #[cfg(windows)]
+        {
+            let unsafe_path = temp.path().join("semi;colon");
+            fs::create_dir(&unsafe_path).unwrap();
+            let encoded = single_entry_path_value(&unsafe_path).unwrap();
+            assert_eq!(
+                std::env::split_paths(&encoded).collect::<Vec<_>>(),
+                [unsafe_path]
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn qualified_private_application_rejects_extra_entries_and_hardlinks() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir(&workspace_root).unwrap();
+        let workspace = Workspace::init(&workspace_root).unwrap();
+        let source = temp.path().join("tomorrowci.exe");
+        fs::copy(std::env::current_exe().unwrap(), &source).unwrap();
+        let artifact = workspace
+            .import_artifact(
+                &source,
+                vec![
+                    "native_executable_snapshot".to_owned(),
+                    "native_qualification_evidence".to_owned(),
+                ],
+                "application/x-executable".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        let plan_id = "plan_11111111111111111111111111111111";
+        let (_, path) = workspace
+            .materialize_qualified_application(plan_id, &artifact.artifact_id, "tomorrowci.exe")
+            .unwrap();
+        let identity = BinaryIdentity {
+            path: path.display().to_string(),
+            sha256: artifact.digest.value,
+            size_bytes: artifact.byte_length,
+            supporting_files_sha256: None,
+            supporting_file_count: 0,
+            reported_version: None,
+            source_path: "tomorrowci.exe".to_owned(),
+            snapshot_artifact_id: artifact.artifact_id,
+        };
+        verify_qualified_application_identity(&workspace, &identity, Some(plan_id)).unwrap();
+
+        let application = path.parent().unwrap();
+        for name in [
+            "git.exe",
+            "docker.exe",
+            "podman.exe",
+            "VCRUNTIME140.dll",
+            "KERNEL32.dll",
+        ] {
+            let hostile = application.join(name);
+            fs::write(&hostile, b"hostile").unwrap();
+            assert!(
+                verify_qualified_application_identity(&workspace, &identity, Some(plan_id))
+                    .is_err()
+            );
+            fs::remove_file(hostile).unwrap();
+        }
+
+        let alias = temp.path().join("launcher-hardlink.exe");
+        fs::hard_link(&path, &alias).unwrap();
+        assert!(
+            verify_qualified_application_identity(&workspace, &identity, Some(plan_id)).is_err()
+        );
+        fs::remove_file(alias).unwrap();
+        verify_qualified_application_identity(&workspace, &identity, Some(plan_id)).unwrap();
     }
 
     #[cfg(windows)]

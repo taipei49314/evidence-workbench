@@ -1,0 +1,7 @@
+# Embedded JSON is hashed byte-for-byte. Pin LF so checkout policy cannot
+# change manifests, upstream pins, schemas, or exact JSON fixtures.
+*.json text eol=lf
+
+# Native qualification archives and exact checksum ledgers are evidence bytes.
+*.zip binary
+tests/fixtures/tomorrowci-qualification/** -text -eol

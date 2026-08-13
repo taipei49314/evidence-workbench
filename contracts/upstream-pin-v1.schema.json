@@ -61,7 +61,7 @@
     "evidence": {
       "type": "object", "additionalProperties": false, "required": ["kind", "id", "name", "subject_commit_sha", "sha256", "size_bytes", "status", "expires_at"],
       "properties": {
-        "kind": { "enum": ["workflow_run", "actions_artifact", "release_asset", "native_executable", "source_release"] },
+        "kind": { "enum": ["workflow_run", "actions_artifact", "release_asset", "native_executable", "source_release", "candidate_manifest", "checksum_ledger", "candidate_archive"] },
         "id": { "type": "string", "minLength": 1 }, "name": { "type": "string", "minLength": 1 },
         "subject_commit_sha": { "$ref": "#/$defs/gitSha" },
         "sha256": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }] },

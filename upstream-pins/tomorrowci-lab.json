@@ -1,14 +1,18 @@
 {
   "schema_version":"upstream_pin/v1","tool_manifest_id":"tomorrowci-lab","repository_url":"https://github.com/taipei49314/tomorrowci-lab",
-  "source":{"default_branch":"master","commit_sha":"62107bc4cdf74eb920e18c549b87ebc59ca3f719","tree_sha":"25f650c10e0a08854ffad359494f45c80b8f6d76"},
+  "source":{"default_branch":"master","commit_sha":"382745e85d2035158cc41fc1c111a512b7957095","tree_sha":"3392dfedeac7f5535db5d65523a762d2a1e42126"},
   "software_version":"0.2.0-alpha.1",
-  "release":{"channel":"candidate_release","version":"0.2.0-alpha.1","tag":"v0.2.0-alpha.1","release_id":"369814204","subject_commit_sha":"f83d43235c4d03ea9a95fc048d3edbd582e8f438","subject_tree_sha":"15c1b44e3efe808100c8707ed7ab33731c702427"},
+  "release":null,
   "evidence":[
-    {"kind":"release_asset","id":"512812041","name":"tomorrowci-v0.2.0-alpha.1-x86_64-pc-windows-msvc.zip","subject_commit_sha":"f83d43235c4d03ea9a95fc048d3edbd582e8f438","sha256":"6723c9c58bf7293f3c69e27a9d1b195bc576711337e181d0faea3852940fd41e","size_bytes":1829127,"status":"published","expires_at":null},
-    {"kind":"native_executable","id":"tomorrowci.exe","name":"tomorrowci.exe","subject_commit_sha":"f83d43235c4d03ea9a95fc048d3edbd582e8f438","sha256":"5a79d242d575c6eb37ed8790974cded4561e36266b5d006a783777b210a15f4f","size_bytes":5140480,"status":"verified_at_admission","expires_at":null}
+    {"kind":"workflow_run","id":"31734705578","name":"release-candidate","subject_commit_sha":"382745e85d2035158cc41fc1c111a512b7957095","sha256":null,"size_bytes":null,"status":"success","expires_at":null},
+    {"kind":"actions_artifact","id":"9194935152","name":"release-candidate-dist-attempt-1","subject_commit_sha":"382745e85d2035158cc41fc1c111a512b7957095","sha256":"3e4c9861940b26abdb8603b2ff984b690d53aed27f306e69bd562d5604e97e8a","size_bytes":90623321,"status":"success","expires_at":"2026-11-11T19:12:57Z"},
+    {"kind":"candidate_manifest","id":"candidate-manifest.json","name":"candidate-manifest.json","subject_commit_sha":"382745e85d2035158cc41fc1c111a512b7957095","sha256":"049420200bb855cbb5736f26b173daba161d65c117864279b0737ea98dac3993","size_bytes":3315,"status":"verified_at_admission","expires_at":null},
+    {"kind":"checksum_ledger","id":"SHA256SUMS.txt","name":"SHA256SUMS.txt","subject_commit_sha":"382745e85d2035158cc41fc1c111a512b7957095","sha256":"bddb812de929fa2ade701a6300c4450742e35a7977d5ad3b5eca876dbd57b669","size_bytes":1439,"status":"verified_at_admission","expires_at":null},
+    {"kind":"candidate_archive","id":"tomorrowci-v0.2.0-alpha.1-x86_64-pc-windows-msvc.zip","name":"tomorrowci-v0.2.0-alpha.1-x86_64-pc-windows-msvc.zip","subject_commit_sha":"382745e85d2035158cc41fc1c111a512b7957095","sha256":"c6a72b6a15496cb3de3c016d4bd54c249984d7d3490cc89692d55543fb310533","size_bytes":1879094,"status":"verified_at_admission","expires_at":null},
+    {"kind":"native_executable","id":"tomorrowci.exe","name":"tomorrowci.exe","subject_commit_sha":"382745e85d2035158cc41fc1c111a512b7957095","sha256":"336528ce2702b2bc21b3e15ad2843a05b828e7b39b0cf98a859c249064470cab","size_bytes":5237760,"status":"verified_at_admission","expires_at":null}
   ],
-  "runtime":{"kind":"native","target_os":"windows","target_arch":"x86_64","version_constraint":"0.2.0-alpha.1","interpreter_included":true,"transitive_dependencies_included":false,"self_contained":false,"external_tools":["docker","git","podman","vcruntime140.dll"]},
+  "runtime":{"kind":"native","target_os":"windows","target_arch":"x86_64","version_constraint":"0.2.0-alpha.1","interpreter_included":true,"transitive_dependencies_included":true,"self_contained":true,"external_tools":[]},
   "native_posture":{"status":"CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED","release_eligible":false},
-  "execution_readiness":{"state":"fail_closed","scope":"bounded_trust_audit_only_with_external_tool_probes_isolated_to_blocked","blocker_codes":["unbound_vcruntime140_dll"]},
+  "execution_readiness":{"state":"ready","scope":"fixed_trust_json_candidate_only_with_durable_local_qualification_and_private_launcher_inventory","blocker_codes":[]},
   "admission":{"evidence_integrity_state":"verified_at_admission","authority_effect":"none"},"license_spdx":"Apache-2.0"
 }

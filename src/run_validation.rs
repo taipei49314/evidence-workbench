@@ -4,7 +4,9 @@ use crate::contracts::{
 };
 use crate::manifests::{self, ObservationContract, ToolManifest};
 use crate::native;
+use crate::native_qualifications;
 use crate::strict_json;
+use crate::upstream_pins;
 use crate::workspace::{self, Workspace};
 use anyhow::{Context, Result, bail};
 use chrono::DateTime;
@@ -30,13 +32,24 @@ pub fn validate(workspace: &Workspace, run: &InstrumentRun) -> Result<()> {
         );
     }
     // Persisted run records are portable evidence.  Linux must be able to
-    // re-derive their exact native projections and reject forged authority
-    // even though creating/executing native plans remains Windows-only.
+    // re-derive their exact references and native projections and reject
+    // forged authority even though creating/executing plans remains
+    // Windows-only.
     if run.adapter.id != manifest.adapter.id || run.adapter.version != manifest.adapter.version {
         bail!("run adapter identity does not match its embedded manifest");
     }
 
     validate_tool_identity(workspace, &run.resolved_tool_identity, manifest)?;
+    validate_upstream_and_qualification(
+        workspace,
+        &run.tool_ref.manifest_id,
+        &run.upstream_pin_ref,
+        run.native_qualification_ref.as_ref(),
+        &run.resolved_tool_identity,
+        &manifest.invocation_contract.operation,
+        Some(&run.source_plan_ref.plan_id),
+        false,
+    )?;
 
     validate_nonempty(&run.recorder_identity.version, "recorder version")?;
     validate_sha256(&run.recorder_identity.executable_sha256)?;
@@ -54,6 +67,37 @@ pub fn validate(workspace: &Workspace, run: &InstrumentRun) -> Result<()> {
     validate_native_result(workspace, run, manifest)?;
     validate_native_authority(&run.native_authority, manifest)?;
     validate_limitations(&run.limitations)?;
+    validate_source_plan_lineage(workspace, run)?;
+    Ok(())
+}
+
+fn validate_source_plan_lineage(workspace: &Workspace, run: &InstrumentRun) -> Result<()> {
+    workspace::validate_prefixed_id(&run.source_plan_ref.plan_id, "plan_")?;
+    validate_sha256(&run.source_plan_ref.record_digest)?;
+    let plan = workspace.load_plan(&run.source_plan_ref.plan_id)?;
+    if plan.record_digest != run.source_plan_ref.record_digest {
+        bail!("run source plan digest does not match the durable plan record");
+    }
+    let payload = &plan.payload;
+    if run.tool_ref != payload.tool_ref
+        || run.upstream_pin_ref != payload.upstream_pin_ref
+        || run.native_qualification_ref != payload.native_qualification_ref
+        || run.resolved_tool_identity != payload.resolved_tool_identity
+        || run.recorder_identity != payload.recorder_identity
+        || run.adapter != payload.adapter
+        || run.subject != payload.subject
+        || run.parameters != payload.parameters
+        || run.invocation != payload.invocation
+    {
+        bail!("run does not inherit its execution inputs exactly from the source plan");
+    }
+    if run.tool_ref.manifest_id == "tomorrowci-lab" {
+        native::validate_qualified_application_path_shape(
+            workspace,
+            &run.resolved_tool_identity,
+            &run.source_plan_ref.plan_id,
+        )?;
+    }
     Ok(())
 }
 
@@ -81,6 +125,16 @@ pub fn validate_plan(workspace: &Workspace, plan_id: &str, plan: &PlanPayload) -
         bail!("plan adapter implementation is not bound to its recorder bytes");
     }
     validate_tool_identity(workspace, &plan.resolved_tool_identity, manifest)?;
+    validate_upstream_and_qualification(
+        workspace,
+        &plan.tool_ref.manifest_id,
+        &plan.upstream_pin_ref,
+        plan.native_qualification_ref.as_ref(),
+        &plan.resolved_tool_identity,
+        &manifest.invocation_contract.operation,
+        Some(plan_id),
+        true,
+    )?;
     validate_subject(workspace, &plan.subject, manifest)?;
     let expected_root = workspace.execution_path(plan_id)?;
     match &plan.subject {
@@ -107,6 +161,49 @@ pub fn validate_plan(workspace: &Workspace, plan_id: &str, plan: &PlanPayload) -
     }
     DateTime::parse_from_rfc3339(&plan.created_at)
         .context("plan created_at is not an RFC 3339 timestamp")?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_upstream_and_qualification(
+    workspace: &Workspace,
+    manifest_id: &str,
+    upstream_ref: &crate::contracts::UpstreamPinRef,
+    qualification_ref: Option<&crate::contracts::NativeQualificationRef>,
+    identity: &crate::contracts::BinaryIdentity,
+    operation: &str,
+    expected_plan_id: Option<&str>,
+    execution_preflight: bool,
+) -> Result<()> {
+    let upstream = upstream_pins::require_ready_for_planning(manifest_id)?;
+    if upstream_ref.tool_manifest_id != manifest_id
+        || upstream_ref.pin_sha256 != upstream.sha256
+        || upstream.pin.execution_readiness.state != upstream_pins::ReadinessState::Ready
+        || upstream.pin.admission.authority_effect != upstream_pins::AuthorityEffect::None
+    {
+        bail!("plan/run does not bind the exact ready upstream pin");
+    }
+    native_qualifications::validate_bound_ref(
+        workspace,
+        qualification_ref,
+        manifest_id,
+        operation,
+        &upstream.sha256,
+        &identity.sha256,
+        execution_preflight,
+    )?;
+    if manifest_id == "tomorrowci-lab" {
+        let expected_plan_id = expected_plan_id
+            .context("qualified TomorrowCI plan/run omits its source plan identity")?;
+        native::validate_qualified_application_path_shape(workspace, identity, expected_plan_id)?;
+        if execution_preflight {
+            native::verify_qualified_application_identity(
+                workspace,
+                identity,
+                Some(expected_plan_id),
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -166,9 +263,17 @@ fn validate_tool_identity(
     }
     workspace::validate_prefixed_id(&identity.snapshot_artifact_id, "artifact_")?;
     let native_snapshot = workspace.load_artifact(&identity.snapshot_artifact_id)?;
+    let expected_roles = if manifest.manifest_id == "tomorrowci-lab" {
+        vec![
+            "native_executable_snapshot".to_owned(),
+            "native_qualification_evidence".to_owned(),
+        ]
+    } else {
+        vec!["native_executable_snapshot".to_owned()]
+    };
     if native_snapshot.artifact.digest.value != identity.sha256
         || native_snapshot.artifact.byte_length != identity.size_bytes
-        || native_snapshot.artifact.roles != ["native_executable_snapshot"]
+        || native_snapshot.artifact.roles != expected_roles
         || native_snapshot.artifact.media_type != "application/x-executable"
         || native_snapshot.artifact.origin != "native_file"
         || native_snapshot.artifact.capture.mode != "byte_for_byte_copy"
@@ -190,7 +295,9 @@ fn validate_tool_identity(
     if !extension.eq_ignore_ascii_case(source_extension) {
         bail!("staged executable extension does not match its source provenance");
     }
-    if staged_path != workspace.staged_executable_path(&identity.sha256, extension)? {
+    if manifest.manifest_id != "tomorrowci-lab"
+        && staged_path != workspace.staged_executable_path(&identity.sha256, extension)?
+    {
         bail!("staged executable path is outside its content-addressed location");
     }
     let (staged_digest, staged_length) = workspace::digest_file(staged_path)?;

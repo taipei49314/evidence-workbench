@@ -98,6 +98,9 @@ pub enum EvidenceKind {
     ReleaseAsset,
     NativeExecutable,
     SourceRelease,
+    CandidateManifest,
+    ChecksumLedger,
+    CandidateArchive,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -303,6 +306,14 @@ pub fn get_for_tool(tool_manifest_id: &str) -> Result<TrustedUpstreamPin> {
         .ok_or_else(|| anyhow::anyhow!("missing trusted upstream pin: {tool_manifest_id}"))
 }
 
+pub fn require_ready_for_planning(tool_manifest_id: &str) -> Result<TrustedUpstreamPin> {
+    let pin = get_for_tool(tool_manifest_id)?;
+    if pin.pin.execution_readiness.state != ReadinessState::Ready {
+        bail!("tool execution readiness is fail_closed in its exact upstream pin");
+    }
+    Ok(pin)
+}
+
 pub fn summary(pin: &TrustedUpstreamPin) -> Value {
     json!({
         "upstream_pin_sha256": pin.sha256,
@@ -425,11 +436,18 @@ fn validate_readiness_against_manifest(
     manifest: &manifests::TrustedManifest,
 ) -> Result<()> {
     let ready = pin.execution_readiness.state == ReadinessState::Ready;
-    if ready {
-        bail!("no current upstream delivery has a complete immutable runtime closure");
+    if ready != manifest.manifest.enabled_by_default {
+        bail!("production manifest enablement must exactly match upstream readiness");
     }
-    if manifest.manifest.enabled_by_default {
-        bail!("a fail-closed upstream delivery cannot have an enabled production adapter");
+    if ready
+        && (pin.runtime.kind != RuntimeKind::Native
+            || !pin.runtime.self_contained
+            || !pin.runtime.transitive_dependencies_included
+            || !pin.runtime.external_tools.is_empty()
+            || pin.native_posture.release_eligible != Some(false)
+            || pin.admission.authority_effect != AuthorityEffect::None)
+    {
+        bail!("ready production native delivery lacks a complete immutable operation closure");
     }
     Ok(())
 }
@@ -549,7 +567,23 @@ mod tests {
             .iter()
             .filter(|pin| pin.pin.execution_readiness.state == ReadinessState::Ready)
             .collect::<Vec<_>>();
-        assert!(ready.is_empty());
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].pin.tool_manifest_id, "tomorrowci-lab");
+    }
+
+    #[test]
+    fn tomorrowci_embedded_pin_bytes_are_lf_stable_and_match_qualification_contract() {
+        let trusted = get_for_tool("tomorrowci-lab").unwrap();
+        assert!(!trusted.raw.as_bytes().contains(&b'\r'));
+        assert_eq!(
+            trusted.sha256,
+            "b7132bff396848ec622f3e079c8bd54edb5b9ed3485fa435e3672ea77739713a"
+        );
+        let qualification: crate::contracts::NativeDeliveryQualification = serde_json::from_str(
+            include_str!("../contracts/examples/native-delivery-qualification-v1.example.json"),
+        )
+        .unwrap();
+        assert_eq!(qualification.upstream_pin_sha256, trusted.sha256);
     }
 
     #[test]

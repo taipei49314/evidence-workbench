@@ -1,3 +1,4 @@
+use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -100,6 +101,20 @@ pub struct GitPlanToolIdentity {
 pub struct ToolRef {
     pub manifest_id: String,
     pub manifest_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamPinRef {
+    pub tool_manifest_id: String,
+    pub pin_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NativeQualificationRef {
+    pub qualification_id: String,
+    pub record_digest: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -237,7 +252,11 @@ pub enum Limitations {
 pub struct InstrumentRun {
     pub schema_version: String,
     pub run_id: String,
+    pub source_plan_ref: PlanRecordRef,
     pub tool_ref: ToolRef,
+    pub upstream_pin_ref: UpstreamPinRef,
+    #[serde(deserialize_with = "deserialize_explicit_option")]
+    pub native_qualification_ref: Option<NativeQualificationRef>,
     pub resolved_tool_identity: BinaryIdentity,
     pub recorder_identity: RecorderIdentity,
     pub adapter: AdapterIdentity,
@@ -265,6 +284,9 @@ pub struct RunRecord {
 #[serde(deny_unknown_fields)]
 pub struct PlanPayload {
     pub tool_ref: ToolRef,
+    pub upstream_pin_ref: UpstreamPinRef,
+    #[serde(deserialize_with = "deserialize_explicit_option")]
+    pub native_qualification_ref: Option<NativeQualificationRef>,
     pub resolved_tool_identity: BinaryIdentity,
     pub recorder_identity: RecorderIdentity,
     pub adapter: AdapterIdentity,
@@ -281,6 +303,92 @@ pub struct PlanRecord {
     pub plan_id: String,
     pub record_digest: String,
     pub payload: PlanPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationArtifactRef {
+    pub role: String,
+    pub artifact_id: String,
+    pub sha256: String,
+    pub byte_length: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationFile {
+    pub role: String,
+    pub path: String,
+    pub sha256: String,
+    pub byte_length: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PeImportQualification {
+    pub verifier_contract_id: String,
+    pub verifier_contract_sha256: String,
+    pub imports: Vec<String>,
+    pub prohibited_app_local_names: Vec<String>,
+    pub report_role: String,
+}
+
+fn deserialize_explicit_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationPlatform {
+    pub os: String,
+    pub arch: String,
+    pub minimum_version: String,
+    pub module_resolution: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NativeDeliveryQualification {
+    pub schema_version: String,
+    pub tool_manifest_id: String,
+    pub operation: String,
+    pub upstream_pin_sha256: String,
+    pub source_commit_sha: String,
+    pub source_tree_sha: String,
+    pub workflow_run_id: String,
+    pub actions_artifact_id: String,
+    pub actions_artifact_name: String,
+    pub actions_artifact_container_sha256: String,
+    pub actions_artifact_expires_at: String,
+    pub candidate_status: String,
+    pub promotion_authorized: bool,
+    pub authority_effect: String,
+    pub platform: QualificationPlatform,
+    pub files: Vec<QualificationFile>,
+    pub pe_imports: PeImportQualification,
+    pub declared_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NativeDeliveryQualificationRecord {
+    pub schema_version: String,
+    pub qualification_id: String,
+    pub record_digest: String,
+    pub payload: NativeDeliveryQualificationRecordPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NativeDeliveryQualificationRecordPayload {
+    pub admitted_at: String,
+    pub descriptor: QualificationArtifactRef,
+    pub artifacts: Vec<QualificationArtifactRef>,
+    pub qualification: NativeDeliveryQualification,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
