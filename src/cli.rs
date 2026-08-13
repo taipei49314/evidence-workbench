@@ -1,7 +1,9 @@
-use crate::contracts::{ArtifactDescriptor, PlanPayload, Subject, ToolRef};
+use crate::contracts::{
+    ArtifactDescriptor, PlanPayload, PlanRecordRef, Subject, ToolRef, UpstreamPinRef,
+};
 use crate::{
-    candidate_pins, git_subject, manifests, native, runtime_capsules, subject_candidates,
-    upstream_pins, workspace,
+    candidate_pins, git_subject, manifests, native, native_qualifications, runtime_capsules,
+    subject_candidates, upstream_pins, workspace,
 };
 use anyhow::{Context, Result, bail};
 use chrono::{SecondsFormat, Utc};
@@ -41,6 +43,8 @@ pub enum Command {
     Tools(ToolsCommand),
     /// Admit and verify exact-byte runtime capsules in the workspace registry.
     Capsules(CapsulesCommand),
+    /// Admit durable native-delivery qualification evidence from exact local bytes.
+    Qualifications(QualificationsCommand),
     /// Import and inspect untrusted exact-byte GitHub discovery candidates.
     Candidates(CandidatesCommand),
     /// Plan, execute, and inspect authority-preserving runs.
@@ -109,6 +113,27 @@ pub struct CandidatesCommand {
     pub command: CandidatesSubcommand,
 }
 
+#[derive(Debug, Args)]
+pub struct QualificationsCommand {
+    #[command(subcommand)]
+    pub command: QualificationsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum QualificationsSubcommand {
+    /// Import a strict descriptor and all named evidence into the local CAS.
+    Admit {
+        #[arg(long, value_name = "FILE")]
+        descriptor: PathBuf,
+        #[arg(long, value_name = "DIRECTORY")]
+        root: PathBuf,
+    },
+    /// Show and re-verify one complete qualification record.
+    Show { qualification_id: String },
+    /// Re-hash every durable CAS reference and all semantic bindings.
+    Verify { qualification_id: String },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum CandidatesSubcommand {
     /// Import exact subject-candidate/v1 bytes bound to an existing source artifact.
@@ -153,6 +178,9 @@ pub enum RunsSubcommand {
         /// until OS-enforced execution containment is implemented.
         #[arg(long, value_name = "CAPSULE_ID")]
         runtime_capsule: Option<String>,
+        /// Durable local native-delivery qualification required by qualified native operations.
+        #[arg(long, value_name = "QUALIFICATION_ID")]
+        runtime_qualification: Option<String>,
     },
     /// Execute a previously reviewed plan after explicit capability approval.
     Execute {
@@ -206,6 +234,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
         Command::Subjects(command) => subjects(command),
         Command::Tools(command) => tools(command),
         Command::Capsules(command) => capsules(cli, command),
+        Command::Qualifications(command) => qualifications(cli, command),
         Command::Candidates(command) => candidates(cli, command),
         Command::Runs(command) => runs(cli, command),
         Command::Artifacts(command) => artifacts(cli, command),
@@ -264,7 +293,9 @@ fn doctor(cli: &Cli) -> Result<CommandOutcome> {
     };
     let probes = manifests::all()?
         .into_iter()
-        .filter(|entry| entry.manifest.enabled_by_default)
+        .filter(|entry| {
+            entry.manifest.enabled_by_default && entry.manifest.manifest_id != "tomorrowci-lab"
+        })
         .map(|entry| native::inspect(&entry))
         .collect::<Vec<_>>();
     let candidate_pins = candidate_pins::all()?
@@ -366,11 +397,19 @@ fn tools(command: &ToolsCommand) -> Result<CommandOutcome> {
                     if !entry.manifest.enabled_by_default {
                         bail!("tool execution readiness is fail_closed; native probe is disabled");
                     }
+                    if entry.manifest.manifest_id == "tomorrowci-lab" {
+                        bail!(
+                            "TomorrowCI is qualification-gated; tools probe cannot resolve PATH or execute outside a bound reviewed plan"
+                        );
+                    }
                     vec![entry]
                 }
                 None => manifests::all()?
                     .into_iter()
-                    .filter(|entry| entry.manifest.enabled_by_default)
+                    .filter(|entry| {
+                        entry.manifest.enabled_by_default
+                            && entry.manifest.manifest_id != "tomorrowci-lab"
+                    })
                     .collect(),
             };
             let probes = entries.iter().map(native::probe).collect::<Vec<_>>();
@@ -397,6 +436,24 @@ fn capsules(cli: &Cli, command: &CapsulesCommand) -> Result<CommandOutcome> {
         CapsulesSubcommand::Verify { capsule_id } => success(
             "capsules.verify",
             serde_json::to_value(runtime_capsules::verify(&workspace, capsule_id)?)?,
+        ),
+    }
+}
+
+fn qualifications(cli: &Cli, command: &QualificationsCommand) -> Result<CommandOutcome> {
+    let workspace = open_workspace(cli)?;
+    match &command.command {
+        QualificationsSubcommand::Admit { descriptor, root } => success(
+            "qualifications.admit",
+            native_qualifications::admit(&workspace, descriptor, root)?,
+        ),
+        QualificationsSubcommand::Show { qualification_id } => success(
+            "qualifications.show",
+            native_qualifications::load_verified(&workspace, qualification_id)?,
+        ),
+        QualificationsSubcommand::Verify { qualification_id } => success(
+            "qualifications.verify",
+            native_qualifications::verify(&workspace, qualification_id)?,
         ),
     }
 }
@@ -434,6 +491,7 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
             parameters,
             timeout_ms,
             runtime_capsule,
+            runtime_qualification,
         } => {
             let manifest = manifests::get(tool)?;
             if manifest.manifest.manifest_id == "phaseledger"
@@ -459,10 +517,29 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
             if !manifest.manifest.enabled_by_default {
                 bail!("tool is cataloged but its execution adapter is disabled in this MVP");
             }
+            let upstream =
+                upstream_pins::require_ready_for_planning(&manifest.manifest.manifest_id)?;
             let parameters = manifests::validate_parameters(&manifest.manifest, parameters)?;
             let plan_id = workspace::new_plan_id();
+            let native_qualification_ref = native_qualifications::bind_for_plan(
+                &workspace,
+                runtime_qualification.as_deref(),
+                &manifest.manifest.manifest_id,
+                &manifest.manifest.invocation_contract.operation,
+            )?;
             // Fail closed on an unsnapshottable runtime before creating subject artifacts.
-            let identity = native::snapshot_tool_identity(&workspace, &manifest.manifest)?;
+            let identity = if let Some(reference) = &native_qualification_ref {
+                let qualification =
+                    native_qualifications::load_verified(&workspace, &reference.qualification_id)?;
+                native::snapshot_qualified_tool_identity(
+                    &workspace,
+                    &manifest.manifest,
+                    &qualification,
+                    &plan_id,
+                )?
+            } else {
+                native::snapshot_tool_identity(&workspace, &manifest.manifest)?
+            };
             let planned_git = if manifest.manifest.subject_kind == "git" {
                 Some(git_subject::snapshot_plan_tool(&workspace)?)
             } else {
@@ -495,6 +572,11 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
                     manifest_id: manifest.manifest.manifest_id.clone(),
                     manifest_sha256: manifest.sha256,
                 },
+                upstream_pin_ref: UpstreamPinRef {
+                    tool_manifest_id: upstream.pin.tool_manifest_id,
+                    pin_sha256: upstream.sha256,
+                },
+                native_qualification_ref,
                 resolved_tool_identity: identity,
                 recorder_identity: recorder,
                 adapter,
@@ -549,7 +631,13 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
                 &manifest,
                 native::ExecutionRequest {
                     run_id: workspace::new_run_id(),
+                    source_plan_ref: PlanRecordRef {
+                        plan_id: plan.plan_id.clone(),
+                        record_digest: plan.record_digest.clone(),
+                    },
                     tool_ref: plan.payload.tool_ref,
+                    upstream_pin_ref: plan.payload.upstream_pin_ref,
+                    native_qualification_ref: plan.payload.native_qualification_ref,
                     identity,
                     recorder,
                     adapter,

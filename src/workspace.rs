@@ -1,6 +1,7 @@
 use crate::contracts::{
-    ArtifactCapture, ArtifactDescriptor, ArtifactRecord, ArtifactStorage, Digest, PlanPayload,
-    PlanRecord, RunRecord, RuntimeCapsuleRecord, SubjectCandidateRecord,
+    ArtifactCapture, ArtifactDescriptor, ArtifactRecord, ArtifactStorage, Digest,
+    NativeDeliveryQualificationRecord, PlanPayload, PlanRecord, RunRecord, RuntimeCapsuleRecord,
+    SubjectCandidateRecord,
 };
 use crate::run_validation;
 use crate::strict_json;
@@ -68,6 +69,7 @@ impl Workspace {
             "locks",
             "capsules",
             "candidates",
+            "qualifications",
         ] {
             ensure_real_dir(&workspace.state.join(name))?;
         }
@@ -98,7 +100,10 @@ impl Workspace {
             Some(path) => path
                 .canonicalize()
                 .with_context(|| format!("cannot resolve workspace path {}", path.display()))?,
-            None => std::env::current_dir().context("cannot read current directory")?,
+            None => std::env::current_dir()
+                .context("cannot read current directory")?
+                .canonicalize()
+                .context("cannot resolve current directory")?,
         };
         let mut cursor = Some(start.as_path());
         while let Some(path) = cursor {
@@ -138,6 +143,7 @@ impl Workspace {
             "locks",
             "capsules",
             "candidates",
+            "qualifications",
         ] {
             validate_real_dir(&self.state.join(name))?;
         }
@@ -199,6 +205,37 @@ impl Workspace {
             .join("runs")
             .join(format!("{}.json", record.run.run_id));
         self.write_json_atomic(&path, &record, true)?;
+        Ok(record)
+    }
+
+    pub fn write_native_qualification(
+        &self,
+        record: &NativeDeliveryQualificationRecord,
+    ) -> Result<()> {
+        validate_prefixed_id(&record.qualification_id, "qualification_")?;
+        let path = self
+            .state
+            .join("qualifications")
+            .join(format!("{}.json", record.qualification_id));
+        self.write_json_atomic(&path, record, true)
+    }
+
+    pub fn load_native_qualification(
+        &self,
+        qualification_id: &str,
+    ) -> Result<NativeDeliveryQualificationRecord> {
+        validate_prefixed_id(qualification_id, "qualification_")?;
+        let path = self
+            .state
+            .join("qualifications")
+            .join(format!("{qualification_id}.json"));
+        let record: NativeDeliveryQualificationRecord = read_strict_json(&path)?;
+        if record.schema_version != "native_delivery_qualification_record/v1"
+            || record.qualification_id != qualification_id
+            || digest_serialized(&record.payload)? != record.record_digest
+        {
+            bail!("native delivery qualification record identity or digest mismatch");
+        }
         Ok(record)
     }
 
@@ -518,6 +555,77 @@ impl Workspace {
 
     pub fn staged_git_plan_launcher_path(&self, digest: &str, extension: &str) -> Result<PathBuf> {
         self.staged_path("git-plan", digest, extension)
+    }
+
+    pub fn qualified_application_executable_path(
+        &self,
+        plan_id: &str,
+        digest: &str,
+        filename: &str,
+    ) -> Result<PathBuf> {
+        validate_prefixed_id(plan_id, "plan_")?;
+        validate_sha256(digest)?;
+        if filename.is_empty()
+            || filename.contains('/')
+            || filename.contains('\\')
+            || matches!(filename, "." | "..")
+        {
+            bail!("qualified application filename is unsafe");
+        }
+        Ok(self
+            .state
+            .join("staged")
+            .join("applications")
+            .join("sha256")
+            .join(digest)
+            .join(plan_id)
+            .join(filename))
+    }
+
+    pub fn materialize_qualified_application(
+        &self,
+        plan_id: &str,
+        artifact_id: &str,
+        filename: &str,
+    ) -> Result<(ArtifactDescriptor, PathBuf)> {
+        let record = self.load_artifact(artifact_id)?;
+        let bytes = self.read_verified_descriptor(&record.artifact)?;
+        let destination = self.qualified_application_executable_path(
+            plan_id,
+            &record.artifact.digest.value,
+            filename,
+        )?;
+        let application = destination
+            .parent()
+            .context("qualified application path has no parent")?;
+        let staged = self.state.join("staged");
+        validate_real_dir(&staged)?;
+        let applications = staged.join("applications");
+        ensure_real_dir(&applications)?;
+        let algorithm = applications.join("sha256");
+        ensure_real_dir(&algorithm)?;
+        let digest_directory = algorithm.join(&record.artifact.digest.value);
+        ensure_real_dir(&digest_directory)?;
+        fs::create_dir(application)
+            .context("cannot create private qualified application directory")?;
+        validate_real_dir(application)?;
+        let mut output = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&destination)?;
+        output.write_all(&bytes)?;
+        output.sync_all()?;
+        drop(output);
+        verify_file(
+            &destination,
+            &record.artifact.digest.value,
+            record.artifact.byte_length,
+        )?;
+        let entries = fs::read_dir(application)?.collect::<Result<Vec<_>, _>>()?;
+        if entries.len() != 1 || entries[0].file_name() != std::ffi::OsStr::new(filename) {
+            bail!("qualified application directory inventory is not launcher-only");
+        }
+        Ok((record.artifact, destination))
     }
 
     fn staged_path(&self, prefix: &str, digest: &str, extension: &str) -> Result<PathBuf> {

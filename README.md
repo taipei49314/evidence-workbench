@@ -12,7 +12,7 @@ The embedded `upstream_pin/v1` registry covers all twelve trusted tool manifests
 |---|---|---|
 | `walkaround` | Session admission | Fail closed: catalog only; Python capsule, mutable session subject, and capability-separated operations are missing |
 | `charterlock` | Exam-charter admission | Fail closed: catalog only; Python capsule, bound multi-artifact inputs, and capability-separated operations are missing |
-| `tomorrowci-lab` | Fixed trust-behavior audit | Fail closed: exact EXE is admitted, but app-local-resolvable `VCRUNTIME140.dll` is not bound |
+| `tomorrowci-lab` | Fixed trust-behavior audit | Ready only with an exact durable local qualification; fixed candidate `trust --json`, Windows 10 x86_64, authority none |
 | `stateweaver-foundation` | Fixed synthetic foundation verification | Fail closed: Linux wheels, no interpreter |
 | `greenwash` | Verification-integrity diff | Fail closed: Python capsule, Git metadata, and fixed execution-time Git are missing |
 | `repopass-inspect` | Offline repository inspection | Fail closed: source qualification blocked; no admitted Windows executable; Git dependency unbound |
@@ -23,7 +23,7 @@ The embedded `upstream_pin/v1` registry covers all twelve trusted tool manifests
 | `smallestlie` | Authorized falsification | Fail closed: runtime, authorization, process-tree, and OS egress containment missing |
 | `nullbench` | Preregistered experiment | Fail closed: runtime, directory subject, and capability-separated operations missing |
 
-No production adapter is currently runnable. This is intentional: a tool becomes ready only when its complete operation-specific runtime closure is admitted, not merely because its launcher is hashed.
+TomorrowCI is the only ready production adapter and remains qualification-gated. The other eleven fail closed. Readiness requires the complete operation-specific closure plus an exact local qualification record; a launcher hash or manifest flag alone is insufficient.
 
 StateWeaver's completed upstream candidate is recorded separately in a strict `candidate_pin/v1`: source commit `598753d182dda65c73a313e9efbf20b826942f0a`, payload-manifest SHA-256 `8c7c77d59d4cf3abdcadcce3f2d110ca085789da1ec14a2301245f3418b78bc3`, and candidate workflow run `31711437241`. At admission, all 113 listed checksums matched and the payload-manifest OIDC attestation verified. This is an integrity/provenance admission, not native authority.
 
@@ -127,20 +127,24 @@ ewb --json --workspace C:\evidence-workspace runs execute `
   --allow invoke_fixed_git
 ```
 
-`runs plan` snapshots the native tool but never launches it, including its version probe. Git-subject planning does invoke the fixed, locked plan-time Git identity to create the bundle and tree artifacts; no Git process is launched by `runs execute`. Keep the returned `record_digest` with the reviewed plan; `runs execute` requires that exact digest and then revalidates the manifest, EWB recorder/adapter implementation, staged native bytes, bundle references, tree artifact, parameters, and full argv before spawning. Do not reread a replacement digest from `.ewb/plans`. Original source worktree, native launcher, Git PATH, and Git installation drift after planning do not change the planned execution; staged or stored snapshot drift fails closed.
+`runs plan` snapshots the native tool but never launches it, including its version probe. Git-subject planning does invoke the fixed, locked plan-time Git identity to create the bundle and tree artifacts; no Git process is launched by `runs execute`. Keep the returned `record_digest` with the reviewed plan; `runs execute` requires that exact digest and then revalidates the manifest, EWB recorder/adapter implementation, staged native bytes, bundle references, tree artifact, parameters, and full argv before spawning. Each persisted run retains `source_plan_ref` and reload requires the durable plan ID/digest plus every inherited execution input to match. Do not reread a replacement digest from `.ewb/plans`. Original source worktree, native launcher, Git PATH, and Git installation drift after planning do not change the planned execution; staged or stored snapshot drift fails closed.
 
-### TomorrowCI future bounded trust audit (currently fails closed)
+### TomorrowCI qualified bounded trust audit
 
 ```powershell
+$qualification = ewb --json --workspace C:\evidence-workspace qualifications admit `
+  --descriptor C:\qualification\native-delivery-qualification.json `
+  --root C:\qualification | ConvertFrom-Json
 $plan = ewb --json --workspace C:\evidence-workspace runs plan `
-  --tool tomorrowci-lab | ConvertFrom-Json
+  --tool tomorrowci-lab `
+  --runtime-qualification $qualification.data.qualification_id | ConvertFrom-Json
 ewb --json --workspace C:\evidence-workspace runs execute `
   --plan $plan.data.plan_id `
   --plan-digest $plan.data.record_digest `
   --allow inspect_host_tooling
 ```
 
-Planning currently rejects this command before writing a plan. EWB admits the exact Windows `tomorrowci.exe` bytes, but the PE imports app-local-resolvable `VCRUNTIME140.dll`; the release contains no copy and the plan does not bind the host DLL. This prevents an honest immutable-runtime claim. Future enablement must admit, snapshot, hash, lock, and reverify the non-platform DLL closure. The implemented adapter also isolates child `PATH` so T5 engine and T8 Git probes would remain explicitly `BLOCKED`, and it preserves `/overall`, `/probes/4/verdict`, and `/probes/7/verdict` separately. None supplies authority or scans a repository.
+The admitted master candidate is statically linked and its built-in PE parser-derived import set is exactly `KERNEL32.DLL`, `NTDLL.DLL`, `BCRYPTPRIMITIVES.DLL`, and the Windows API-set synchronization contract, with no delay imports or `VCRUNTIME140.dll`. EWB binds candidate manifest, checksum ledger, archive, EXE, PE evidence, upstream pin, and local record digest; it materializes a private launcher-only application directory and supplies an exact-empty PATH. `verifier_contract_sha256` hashes the parser contract identifier; it is not presented as an implementation digest. EWB itself re-parses the exact EXE at admission and every reload, while plan/run records bind the EWB implementation. T5 and T8 therefore remain native `BLOCKED` observations. `/overall`, `/probes/4/verdict`, and `/probes/7/verdict` remain separate projections and none supplies authority.
 
 ### RepoPassport future local inspect (currently fails closed)
 
@@ -234,6 +238,7 @@ Errors are also one JSON value and never include native output or credentials.
 - [`contracts/tool-manifest-v1.schema.json`](contracts/tool-manifest-v1.schema.json)
 - [`contracts/candidate-pin-v1.schema.json`](contracts/candidate-pin-v1.schema.json)
 - [`contracts/upstream-pin-v1.schema.json`](contracts/upstream-pin-v1.schema.json)
+- [`contracts/native-delivery-qualification-v1.schema.json`](contracts/native-delivery-qualification-v1.schema.json)
 
 The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or aggregate result field. A native projection carries its own namespace, value, `projection_only: true`, artifact ID, and exact locator. In `instrument_run/v1`, `native_authority` is schema-constrained to `not_reported`, and artifact `source_run_id` is constrained to `null` rather than asserting unverified lineage; either feature requires a new contract version with native rebinding rather than widening v1 in place.
 
@@ -249,7 +254,7 @@ The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or
 - Clean Git commit identity is required. Dirty and untracked working trees fail closed.
 - Python-backed planning is disabled until the launcher, interpreter, runtime, distribution, and transitive dependencies can all be snapshotted immutably.
 - Each production manifest has one embedded `upstream_pin/v1`. Its source/delivery/posture fields are registry evidence; only its separate `execution_readiness` field controls whether an exact operation has an admitted closure.
-- TomorrowCI's future trust-audit path isolates child Git/container-engine lookups to an empty PATH, but PATH isolation does not constrain Windows DLL loading. It remains disabled until `VCRUNTIME140.dll` and the non-platform DLL closure are bound.
+- TomorrowCI's qualification-gated trust audit isolates child Git/container-engine lookups to an exact-empty PATH and verifies a private launcher-only application directory before/after execution. The PE import boundary is independently parsed from the exact EXE. Same-user mid-run namespace races remain explicit limitations; this is not OS containment.
 - SHA-256 checksums establish byte integrity, not producer authenticity or authority.
 
 ## Development verification

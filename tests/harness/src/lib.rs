@@ -14,6 +14,8 @@ pub mod git_subject;
 pub mod manifests;
 #[path = "../../../src/native.rs"]
 pub mod native;
+#[path = "../../../src/native_qualifications.rs"]
+pub mod native_qualifications;
 #[path = "../../../src/run_validation.rs"]
 pub mod run_validation;
 #[path = "../../../src/runtime_capsules.rs"]
@@ -22,7 +24,7 @@ pub mod runtime_capsules;
 pub mod strict_json;
 #[path = "../../../src/subject_candidates.rs"]
 pub mod subject_candidates;
-#[path = "../../../src/upstream_pins.rs"]
+#[path = "upstream_pins.rs"]
 pub mod upstream_pins;
 #[path = "../../../src/workspace.rs"]
 pub mod workspace;

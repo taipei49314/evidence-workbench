@@ -39,3 +39,25 @@ artifact references already held by the workspace, and copies each exact file
 into EWB-owned content-addressed storage. The registry record digest binds the
 exact descriptor bytes, parsed contract, and every snapshot. Admission and
 qualification evidence retain `authority_effect: none`.
+
+`native_delivery_qualification/v1` binds one qualified native operation to exact
+local evidence. `qualifications admit` imports the raw descriptor, candidate
+manifest, checksum ledger, Windows archive, extracted EXE, and PE report into
+the workspace CAS. Its record ID derives from the raw descriptor bytes. EWB
+re-parses candidate/checksum evidence and independently derives the PE32+ x86-64
+import table and empty delay-import table from the exact EXE at admission and
+every load. Plans and runs bind both this record digest and the exact embedded
+upstream-pin digest; remote Actions expiry is provenance, never a runtime input.
+
+This pre-release `instrument_run/v1` contract is replaced in 0.2 to require
+`source_plan_ref`, `upstream_pin_ref`, and `native_qualification_ref` (nullable
+only for operations that do not use a native qualification). Run loading
+revalidates the durable source plan ID/digest and requires every execution input
+to match that plan exactly. Older envelopes are rejected instead of silently
+receiving an authority-bearing default.
+
+The PE evidence field `verifier_contract_sha256` is the SHA-256 of the closed
+verifier contract identifier, not an implementation-binary identity. The
+current EWB implementation independently re-parses the exact EXE during every
+admission and reload; plan/run records separately bind the EWB recorder and
+adapter implementation digest.

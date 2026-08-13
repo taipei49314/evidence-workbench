@@ -23,3 +23,5 @@ sha2 = "0.10"
 tempfile = "3.20"
 uuid = { version = "1.18", features = ["serde", "v4"] }
 wait-timeout = "0.2"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Wdk_System_SystemServices"] }
+zip = { version = "2.4.2", default-features = false, features = ["deflate"] }

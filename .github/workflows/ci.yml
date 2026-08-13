@@ -70,8 +70,13 @@ jobs:
         run: |
           $tools = & target/ci-install/bin/ewb --json tools list | ConvertFrom-Json
           if (-not $tools.ok) { throw "tools list failed" }
+          # Linux cannot create Windows native plans, so planning_supported remains zero here.
           if (@($tools.data | Where-Object planning_supported).Count -ne 0) {
-            throw "a production adapter became runnable without explicit qualification"
+            throw "a Windows-only production adapter became runnable on Linux"
+          }
+          $ready = @($tools.data | Where-Object { $_.upstream_pin.execution_readiness.state -eq 'ready' })
+          if ($ready.Count -ne 1 -or $ready[0].manifest_id -ne 'tomorrowci-lab') {
+            throw "expected exactly the qualification-gated TomorrowCI upstream delivery to be ready"
           }
           if (@($tools.data | Where-Object { $_.upstream_pin.authority_effect -ne 'none' }).Count -ne 0) {
             throw "an upstream pin acquired authority"

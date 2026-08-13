@@ -5,6 +5,7 @@ pub mod data_contract_validation;
 pub mod git_subject;
 pub mod manifests;
 pub mod native;
+pub mod native_qualifications;
 pub mod run_validation;
 pub mod runtime_capsules;
 pub mod strict_json;

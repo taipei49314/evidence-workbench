@@ -20,6 +20,9 @@ The workbench is transport and orchestration. It is not an authority.
 14. Every production tool has one exact `upstream_pin/v1`. Source completion, CI success, release publication, checksum integrity, native posture, and execution readiness remain separate fields; only an admitted operation-specific runtime closure may be `ready`.
 15. An upstream pin always has `authority_effect: none`. Readiness cannot be inferred from a release, Actions artifact, attestation, checksum, native posture label, or process exit.
 16. A runnable adapter that references external tools must either bind their exact bytes or deliberately make them unavailable and preserve the resulting native `BLOCKED` observations. It may not silently inherit ambient PATH executables.
+17. Every production plan and run binds the exact embedded upstream-pin digest. A qualification-gated operation also binds a durable local qualification record ID and digest; manifest enablement alone never authorizes execution.
+18. Qualified native execution uses a private, content-addressed, launcher-only application directory and an EWB-owned empty PATH, checking exact inventories before and after spawn. Remaining same-user namespace races are limitations, not OS-containment claims.
+19. Every run names the exact durable source plan ID and digest, and must inherit that plan's tool, upstream/qualification refs, identities, subject, parameters, and invocation without substitution.
 
 ## Native-result vocabulary
 

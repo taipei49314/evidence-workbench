@@ -541,11 +541,64 @@ mod tests {
         for raw in [
             include_str!("../contracts/subject-candidate-v1.schema.json"),
             include_str!("../contracts/runtime-capsule-v1.schema.json"),
+            include_str!("../contracts/native-delivery-qualification-v1.schema.json"),
             include_str!("../contracts/ide-handoff-v1.schema.json"),
         ] {
             let schema: Value = serde_json::from_str(raw).expect("valid JSON Schema JSON");
             assert_objects_are_closed(&schema);
         }
+    }
+
+    #[test]
+    fn required_nullable_native_qualification_and_source_plan_fields_are_exact() {
+        let run: Value = serde_json::from_slice(include_bytes!(
+            "../contracts/examples/instrument-run-v1.example.json"
+        ))
+        .unwrap();
+        let parsed: crate::contracts::InstrumentRun = serde_json::from_value(run.clone()).unwrap();
+        assert!(parsed.native_qualification_ref.is_none());
+
+        let mut missing_native = run.clone();
+        missing_native
+            .as_object_mut()
+            .unwrap()
+            .remove("native_qualification_ref");
+        assert!(serde_json::from_value::<crate::contracts::InstrumentRun>(missing_native).is_err());
+
+        let mut missing_plan = run.clone();
+        missing_plan
+            .as_object_mut()
+            .unwrap()
+            .remove("source_plan_ref");
+        assert!(serde_json::from_value::<crate::contracts::InstrumentRun>(missing_plan).is_err());
+
+        let mut missing_upstream = run.clone();
+        missing_upstream
+            .as_object_mut()
+            .unwrap()
+            .remove("upstream_pin_ref");
+        assert!(
+            serde_json::from_value::<crate::contracts::InstrumentRun>(missing_upstream).is_err()
+        );
+
+        let mut plan = json!({
+            "tool_ref": run["tool_ref"].clone(),
+            "upstream_pin_ref": run["upstream_pin_ref"].clone(),
+            "native_qualification_ref": null,
+            "resolved_tool_identity": run["resolved_tool_identity"].clone(),
+            "recorder_identity": run["recorder_identity"].clone(),
+            "adapter": run["adapter"].clone(),
+            "subject": run["subject"].clone(),
+            "invocation": run["invocation"].clone(),
+            "parameters": run["parameters"].clone(),
+            "created_at": "2026-08-13T11:59:00Z"
+        });
+        let parsed: crate::contracts::PlanPayload = serde_json::from_value(plan.clone()).unwrap();
+        assert!(parsed.native_qualification_ref.is_none());
+        plan.as_object_mut()
+            .unwrap()
+            .remove("native_qualification_ref");
+        assert!(serde_json::from_value::<crate::contracts::PlanPayload>(plan).is_err());
     }
 
     fn assert_objects_are_closed(value: &Value) {

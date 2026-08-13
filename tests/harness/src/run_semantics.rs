@@ -1,7 +1,8 @@
 use crate::contracts::{
     AdapterIdentity, BinaryIdentity, InstrumentRun, Invocation, Limitations, Locator,
     NativeAuthority, NativeAuthorityClaim, NativeObservation, NativeResult, ObservationSource,
-    RecorderIdentity, Revision, Subject, Termination, ToolRef,
+    PlanPayload, PlanRecord, PlanRecordRef, RecorderIdentity, Revision, Subject, Termination,
+    ToolRef,
 };
 use crate::manifests;
 use crate::workspace::{self, Workspace};
@@ -96,10 +97,16 @@ fn valid_run(temp: &TempDir) -> (Workspace, InstrumentRun) {
     let run = InstrumentRun {
         schema_version: "instrument_run/v1".to_owned(),
         run_id: format!("run_{}", "22".repeat(16)),
+        source_plan_ref: PlanRecordRef {
+            plan_id: format!("plan_{}", "99".repeat(16)),
+            record_digest: "00".repeat(32),
+        },
         tool_ref: ToolRef {
             manifest_id: manifest.manifest.manifest_id.clone(),
             manifest_sha256: manifest.sha256,
         },
+        upstream_pin_ref: crate::upstream_pins::fixture_ref(),
+        native_qualification_ref: None,
         resolved_tool_identity: BinaryIdentity {
             path: staged.display().to_string(),
             sha256: native_snapshot.digest.value.clone(),
@@ -190,6 +197,35 @@ fn valid_run(temp: &TempDir) -> (Workspace, InstrumentRun) {
         },
         limitations: Limitations::NotReported { items: Vec::new() },
     };
+    let mut run = run;
+    let plan_payload = PlanPayload {
+        tool_ref: run.tool_ref.clone(),
+        upstream_pin_ref: run.upstream_pin_ref.clone(),
+        native_qualification_ref: run.native_qualification_ref.clone(),
+        resolved_tool_identity: run.resolved_tool_identity.clone(),
+        recorder_identity: run.recorder_identity.clone(),
+        adapter: run.adapter.clone(),
+        subject: run.subject.clone(),
+        invocation: run.invocation.clone(),
+        parameters: run.parameters.clone(),
+        created_at: "2026-08-13T11:59:00Z".to_owned(),
+    };
+    let record_digest = workspace::digest_serialized(&plan_payload).unwrap();
+    let plan = PlanRecord {
+        schema_version: "plan_record/v1".to_owned(),
+        plan_id: run.source_plan_ref.plan_id.clone(),
+        record_digest: record_digest.clone(),
+        payload: plan_payload,
+    };
+    fs::write(
+        workspace
+            .state
+            .join("plans")
+            .join(format!("{}.json", plan.plan_id)),
+        serde_json::to_vec_pretty(&plan).unwrap(),
+    )
+    .unwrap();
+    run.source_plan_ref.record_digest = record_digest;
     (workspace, run)
 }
 
@@ -266,6 +302,24 @@ fn load_run_revalidates_semantics_even_after_digest_is_recomputed() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("value does not match exact re-extraction"));
+}
+
+#[test]
+fn write_run_rejects_forged_source_plan_digest() {
+    let temp = TempDir::new().unwrap();
+    let (workspace, mut run) = valid_run(&temp);
+    run.source_plan_ref.record_digest = "ff".repeat(32);
+    let error = workspace.write_run(run).unwrap_err().to_string();
+    assert!(error.contains("source plan digest"));
+}
+
+#[test]
+fn write_run_rejects_input_divergence_from_source_plan() {
+    let temp = TempDir::new().unwrap();
+    let (workspace, mut run) = valid_run(&temp);
+    run.recorder_identity.version = "0.1.1".to_owned();
+    let error = workspace.write_run(run).unwrap_err().to_string();
+    assert!(error.contains("does not inherit its execution inputs"));
 }
 
 #[test]
