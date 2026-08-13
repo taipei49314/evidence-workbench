@@ -1,6 +1,6 @@
 use crate::contracts::{
     ArtifactCapture, ArtifactDescriptor, ArtifactRecord, ArtifactStorage, Digest, PlanPayload,
-    PlanRecord, RunRecord,
+    PlanRecord, RunRecord, RuntimeCapsuleRecord,
 };
 use crate::run_validation;
 use crate::strict_json;
@@ -66,6 +66,7 @@ impl Workspace {
             "staged",
             "executions",
             "locks",
+            "capsules",
         ] {
             ensure_real_dir(&workspace.state.join(name))?;
         }
@@ -134,6 +135,7 @@ impl Workspace {
             "staged",
             "executions",
             "locks",
+            "capsules",
         ] {
             validate_real_dir(&self.state.join(name))?;
         }
@@ -227,6 +229,44 @@ impl Workspace {
             records.push(self.load_run(id)?);
         }
         records.sort_by(|left, right| left.run.started_at.cmp(&right.run.started_at));
+        Ok(records)
+    }
+
+    pub fn write_runtime_capsule(&self, record: &RuntimeCapsuleRecord) -> Result<()> {
+        validate_prefixed_id(&record.capsule_id, "capsule_")?;
+        let path = self
+            .state
+            .join("capsules")
+            .join(format!("{}.json", record.capsule_id));
+        self.write_json_atomic(&path, record, true)
+    }
+
+    pub fn load_runtime_capsule(&self, capsule_id: &str) -> Result<RuntimeCapsuleRecord> {
+        validate_prefixed_id(capsule_id, "capsule_")?;
+        let path = self
+            .state
+            .join("capsules")
+            .join(format!("{capsule_id}.json"));
+        read_strict_json(&path)
+    }
+
+    pub fn list_runtime_capsules(&self) -> Result<Vec<RuntimeCapsuleRecord>> {
+        let mut records = Vec::new();
+        for entry in fs::read_dir(self.state.join("capsules"))? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let id = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("runtime capsule record has a non-UTF-8 filename")
+                })?;
+            records.push(self.load_runtime_capsule(id)?);
+        }
+        records.sort_by(|left, right| left.capsule_id.cmp(&right.capsule_id));
         Ok(records)
     }
 

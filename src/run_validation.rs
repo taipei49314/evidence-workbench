@@ -29,8 +29,9 @@ pub fn validate(workspace: &Workspace, run: &InstrumentRun) -> Result<()> {
             "instrument run uses a Python adapter whose immutable runtime snapshot is not implemented"
         );
     }
-    #[cfg(not(windows))]
-    bail!("native instrument runs are unsupported until descriptor-based exec is implemented");
+    require_windows_execution_boundary(
+        "native instrument runs are unsupported until descriptor-based exec is implemented",
+    )?;
     if run.adapter.id != manifest.adapter.id || run.adapter.version != manifest.adapter.version {
         bail!("run adapter identity does not match its embedded manifest");
     }
@@ -66,8 +67,9 @@ pub fn validate_plan(workspace: &Workspace, plan_id: &str, plan: &PlanPayload) -
     if manifest.identity_contract.python_distribution.is_some() {
         bail!("plan uses a Python adapter whose immutable runtime snapshot is not implemented");
     }
-    #[cfg(not(windows))]
-    bail!("native execution plans are unsupported until descriptor-based exec is implemented");
+    require_windows_execution_boundary(
+        "native execution plans are unsupported until descriptor-based exec is implemented",
+    )?;
 
     if plan.adapter.id != manifest.adapter.id || plan.adapter.version != manifest.adapter.version {
         bail!("plan adapter identity does not match its embedded manifest");
@@ -106,6 +108,14 @@ pub fn validate_plan(workspace: &Workspace, plan_id: &str, plan: &PlanPayload) -
     DateTime::parse_from_rfc3339(&plan.created_at)
         .context("plan created_at is not an RFC 3339 timestamp")?;
     Ok(())
+}
+
+fn require_windows_execution_boundary(message: &str) -> Result<()> {
+    if cfg!(windows) {
+        Ok(())
+    } else {
+        bail!(message.to_owned())
+    }
 }
 
 fn validate_tool_identity(

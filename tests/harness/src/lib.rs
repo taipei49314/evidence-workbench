@@ -6,6 +6,8 @@ pub mod candidate_pins;
 pub mod cli;
 #[path = "../../../src/contracts.rs"]
 pub mod contracts;
+#[path = "../../../src/data_contract_validation.rs"]
+pub mod data_contract_validation;
 #[path = "../../../src/git_subject.rs"]
 pub mod git_subject;
 #[path = "manifests.rs"]
@@ -14,6 +16,8 @@ pub mod manifests;
 pub mod native;
 #[path = "../../../src/run_validation.rs"]
 pub mod run_validation;
+#[path = "../../../src/runtime_capsules.rs"]
+pub mod runtime_capsules;
 #[path = "../../../src/strict_json.rs"]
 pub mod strict_json;
 #[path = "../../../src/upstream_pins.rs"]

@@ -1,8 +1,8 @@
 use assert_cmd::Command;
-use evidence_workbench::contracts::PlanRecord;
+use evidence_workbench::contracts::{PlanRecord, RuntimeCapsule};
 use evidence_workbench::manifests;
 use evidence_workbench::workspace::digest_serialized;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -471,6 +471,163 @@ fn stateweaver_plan_fails_before_writing_without_runtime_capsule() {
             .as_str()
             .unwrap()
             .contains("execution adapter is disabled")
+    );
+    assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
+}
+
+#[test]
+fn capsule_cli_admits_lists_shows_and_verifies_while_phaseledger_stays_blocked() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let capsule_root = temp.path().join("capsule-root");
+    fs::create_dir_all(capsule_root.join("Lib")).unwrap();
+    let launcher = b"exact python launcher";
+    let module = b"exact phaseledger module";
+    fs::write(capsule_root.join("python.exe"), launcher).unwrap();
+    fs::write(capsule_root.join("Lib/phaseledger.py"), module).unwrap();
+    let capsule_id = "capsule_12121212121212121212121212121212";
+    let mut descriptor = json!({
+        "schema_version": "runtime-capsule/v1",
+        "capsule_id": capsule_id,
+        "platform": {
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "abi": "cp313-test"
+        },
+        "launcher": {
+            "kind": "interpreter",
+            "path": "python.exe",
+            "byte_length": launcher.len(),
+            "digest": {
+                "algorithm": "sha256",
+                "value": hex::encode(Sha256::digest(launcher))
+            }
+        },
+        "supporting_files": [{
+            "path": "Lib/phaseledger.py",
+            "role": "first_party_package",
+            "byte_length": module.len(),
+            "digest": {
+                "algorithm": "sha256",
+                "value": hex::encode(Sha256::digest(module))
+            }
+        }],
+        "transitive_closure": {
+            "state": "complete",
+            "inventory_digest": {"algorithm":"sha256","value":"00".repeat(32)},
+            "declared_file_count": 1,
+            "inventoried_file_count": 1,
+            "missing_paths": []
+        },
+        "external_platform_assumptions": [],
+        "operation_scope": {
+            "tool_manifest_id": "phaseledger",
+            "operations": ["phaseledger_measure"]
+        },
+        "qualification_evidence": [],
+        "readiness": {
+            "state": "fail_closed",
+            "blocker_codes": ["qualification_missing"]
+        },
+        "authority_effect": "none"
+    });
+    let parsed: RuntimeCapsule = serde_json::from_value(descriptor.clone()).unwrap();
+    descriptor["transitive_closure"]["inventory_digest"]["value"] = Value::String(
+        digest_serialized(&parsed.supporting_files).expect("digest supporting inventory"),
+    );
+    let descriptor_path = temp.path().join("runtime-capsule.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec_pretty(&descriptor).unwrap(),
+    )
+    .unwrap();
+
+    let (code, admitted, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["capsules", "admit", "--descriptor"])
+            .arg(&descriptor_path)
+            .arg("--root")
+            .arg(&capsule_root),
+    );
+    assert_eq!(code, 0, "{admitted:?} {stderr}");
+    assert_eq!(admitted["data"]["capsule_id"], capsule_id);
+    assert_eq!(
+        admitted["data"]["payload"]["capsule"]["authority_effect"],
+        "none"
+    );
+
+    let (code, listed, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["capsules", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["data"].as_array().unwrap().len(), 1);
+
+    for command in ["show", "verify"] {
+        let (code, value, stderr) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["capsules", command, capsule_id]),
+        );
+        assert_eq!(code, 0, "{value:?} {stderr}");
+        assert_eq!(value["data"]["capsule_id"], capsule_id);
+    }
+
+    let plans_before = fs::read_dir(temp.path().join(".ewb/plans"))
+        .unwrap()
+        .count();
+    let (code, blocked, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--runtime-capsule",
+                capsule_id,
+            ]),
+    );
+    assert_eq!(code, 2, "{blocked:?} {stderr}");
+    assert!(
+        blocked["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("runtime_capsule_not_ready")
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/plans"))
+            .unwrap()
+            .count(),
+        plans_before
+    );
+}
+
+#[test]
+fn phaseledger_without_capsule_fails_before_importing_subject_or_plan() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let before = tree_snapshot(&temp.path().join(".ewb"));
+
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["runs", "plan", "--tool", "phaseledger"]),
+    );
+
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("runtime_capsule_required")
     );
     assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
 }

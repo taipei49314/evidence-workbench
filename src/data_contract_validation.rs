@@ -6,6 +6,7 @@ use crate::strict_json;
 use anyhow::{Context, Result, bail};
 use chrono::DateTime;
 use serde::de::DeserializeOwned;
+use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 
 pub fn parse_subject_candidate(bytes: &[u8]) -> Result<SubjectCandidate> {
@@ -92,6 +93,18 @@ pub fn validate_runtime_capsule(capsule: &RuntimeCapsule) -> Result<()> {
     )?;
     let actual_inventory_count = u64::try_from(capsule.supporting_files.len())
         .context("supporting-file inventory is too large")?;
+    if capsule
+        .supporting_files
+        .windows(2)
+        .any(|pair| pair[0].path >= pair[1].path)
+    {
+        bail!("runtime capsule supporting files must be ordered by path");
+    }
+    let inventory_bytes = serde_json::to_vec(&capsule.supporting_files)?;
+    let actual_inventory_digest = hex::encode(Sha256::digest(inventory_bytes));
+    if capsule.transitive_closure.inventory_digest.value != actual_inventory_digest {
+        bail!("runtime capsule supporting-file inventory digest mismatch");
+    }
     if capsule.transitive_closure.inventoried_file_count != actual_inventory_count {
         bail!("transitive closure count does not match the supporting-file inventory");
     }

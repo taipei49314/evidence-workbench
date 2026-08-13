@@ -371,6 +371,38 @@ pub struct RuntimeCapsule {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct RuntimeCapsuleFileSnapshot {
+    pub path: String,
+    pub role: String,
+    pub artifact_id: String,
+    pub digest: Digest,
+    pub byte_length: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeCapsuleRecordPayload {
+    /// SHA-256 of the exact descriptor bytes supplied to `capsules admit`.
+    pub descriptor_sha256: String,
+    pub descriptor_artifact_id: String,
+    pub launcher: RuntimeCapsuleFileSnapshot,
+    pub supporting_files: Vec<RuntimeCapsuleFileSnapshot>,
+    pub capsule: RuntimeCapsule,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeCapsuleRecord {
+    pub schema_version: String,
+    pub capsule_id: String,
+    /// Binds the parsed descriptor, its exact source bytes, and every EWB-owned
+    /// exact-byte file snapshot. This is the future plan/run binding identity.
+    pub record_digest: String,
+    pub payload: RuntimeCapsuleRecordPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CapsulePlatform {
     pub os: String,
     pub arch: String,

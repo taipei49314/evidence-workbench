@@ -239,10 +239,9 @@ pub fn snapshot_tool_identity(
     workspace: &Workspace,
     manifest: &ToolManifest,
 ) -> Result<BinaryIdentity> {
-    #[cfg(not(windows))]
-    bail!(
-        "native execution planning is disabled on this platform until descriptor-based exec removes path replacement races"
-    );
+    require_windows_execution_boundary(
+        "native execution planning is disabled on this platform until descriptor-based exec removes path replacement races",
+    )?;
     let discovered = resolve_tool_identity(manifest, false)?;
     let (artifact, staged) =
         workspace.import_native_snapshot(Path::new(&discovered.source_path))?;
@@ -256,6 +255,14 @@ pub fn snapshot_tool_identity(
         source_path: discovered.source_path,
         snapshot_artifact_id: artifact.artifact_id,
     })
+}
+
+fn require_windows_execution_boundary(message: &str) -> Result<()> {
+    if cfg!(windows) {
+        Ok(())
+    } else {
+        bail!(message.to_owned())
+    }
 }
 
 pub fn build_invocation(
@@ -1187,6 +1194,7 @@ fn now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
     use tempfile::TempDir;
 
     #[test]

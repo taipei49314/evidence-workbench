@@ -17,7 +17,7 @@ The embedded `upstream_pin/v1` registry covers all twelve trusted tool manifests
 | `greenwash` | Verification-integrity diff | Fail closed: Python capsule, Git metadata, and fixed execution-time Git are missing |
 | `repopass-inspect` | Offline repository inspection | Fail closed: source qualification blocked; no admitted Windows executable; Git dependency unbound |
 | `trust-meter` | Advisory structural measure | Fail closed: Python capsule and ambient ancestor config isolation missing |
-| `phaseledger` | Caller-observation gate | Fail closed: Python capsule missing |
+| `phaseledger` | Caller-observation gate | Fail closed: exact-byte capsule admission exists; OS-enforced no-network/process containment is not implemented |
 | `unasked` | Research/authority workflow | Fail closed: runtime/Git closure, non-certifying posture, and proprietary redistribution boundary |
 | `normshift` | Standards semantic-change replay | Fail closed: Python capsule and multi-file source bundle missing |
 | `smallestlie` | Authorized falsification | Fail closed: runtime, authorization, process-tree, and OS egress containment missing |
@@ -55,6 +55,26 @@ ewb --json tools list
 ```
 
 `doctor` is read-only and does not launch native version commands. `tools probe` is also rejected for every `fail_closed` adapter; it may launch a version probe only after a future production adapter has an admitted complete runtime closure. Trusted manifests are compiled into the `ewb` binary; files placed under `.ewb/manifests` cannot grant a new executable, capability, result, or authority claim.
+
+### Runtime capsule registry
+
+An explicit local capsule can be imported only from a closed root whose files
+exactly match `runtime-capsule/v1`:
+
+```powershell
+$capsule = ewb --json --workspace C:\evidence-workspace capsules admit `
+  --descriptor C:\capsules\phaseledger\runtime-capsule.json `
+  --root C:\capsules\phaseledger\runtime | ConvertFrom-Json
+
+ewb --json --workspace C:\evidence-workspace capsules verify `
+  $capsule.data.capsule_id
+```
+
+`admit` never downloads or installs anything. It rejects extra, missing,
+linked, reparse, or hash-mismatched files; all qualification evidence must
+already exist as exact workspace artifacts. `list`, `show`, and `verify`
+revalidate registry records and EWB-owned object bytes. Capsule readiness and
+qualification do not create a native result, trust claim, or authority.
 
 ### Greenwash future invocation (currently fails closed)
 
@@ -112,14 +132,15 @@ ewb --json --workspace C:\evidence-workspace runs execute `
   --allow read_subject
 
 $gate = ewb --json --workspace C:\evidence-workspace runs plan `
-  --tool phaseledger --input C:\evidence\observation.json | ConvertFrom-Json
+  --tool phaseledger --runtime-capsule $capsule.data.capsule_id `
+  --input C:\evidence\observation.json | ConvertFrom-Json
 ewb --json --workspace C:\evidence-workspace runs execute `
   --plan $gate.data.plan_id `
   --plan-digest $gate.data.record_digest `
   --allow read_artifact
 ```
 
-The caller remains responsible for constructing an honest phaseledger observation whose claim scope names the exact subject and predicate source.
+The caller remains responsible for constructing an honest phaseledger observation whose claim scope names the exact subject and predicate source. Even a `ready` exact-byte capsule currently stops before plan creation with `python_capsule_execution_containment_unimplemented`: the minimized process environment is not an OS-enforced network or child-process sandbox.
 
 ### StateWeaver candidate admission and future invocation (execution currently fails closed)
 

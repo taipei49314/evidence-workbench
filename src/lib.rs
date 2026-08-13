@@ -6,6 +6,7 @@ pub mod git_subject;
 pub mod manifests;
 pub mod native;
 pub mod run_validation;
+pub mod runtime_capsules;
 pub mod strict_json;
 pub mod upstream_pins;
 pub mod workspace;

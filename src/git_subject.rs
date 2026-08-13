@@ -4,7 +4,9 @@ use anyhow::{Context, Result, bail};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(windows)]
+use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,8 +22,7 @@ pub struct PlannedGit {
 }
 
 pub fn snapshot_plan_tool(workspace: &Workspace) -> Result<PlannedGit> {
-    #[cfg(not(windows))]
-    bail!("Git subject planning is disabled outside Windows in this MVP");
+    require_windows_planning("Git subject planning is disabled outside Windows in this MVP")?;
     let source = find_git_on_path()?;
     let mut locked_source = open_git_read_no_write_share(&source)?;
     let (source_sha256, source_size_bytes) = digest_open_file(&mut locked_source)?;
@@ -43,6 +44,14 @@ pub fn snapshot_plan_tool(workspace: &Workspace) -> Result<PlannedGit> {
         identity,
         locked_source,
     })
+}
+
+fn require_windows_planning(message: &str) -> Result<()> {
+    if cfg!(windows) {
+        Ok(())
+    } else {
+        bail!(message.to_owned())
+    }
 }
 
 impl PlannedGit {

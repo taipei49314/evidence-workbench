@@ -1,5 +1,7 @@
 use crate::contracts::{ArtifactDescriptor, PlanPayload, Subject, ToolRef};
-use crate::{candidate_pins, git_subject, manifests, native, upstream_pins, workspace};
+use crate::{
+    candidate_pins, git_subject, manifests, native, runtime_capsules, upstream_pins, workspace,
+};
 use anyhow::{Context, Result, bail};
 use chrono::{SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
@@ -36,6 +38,8 @@ pub enum Command {
     Subjects(SubjectsCommand),
     /// Inspect and probe embedded trusted tool manifests.
     Tools(ToolsCommand),
+    /// Admit and verify exact-byte runtime capsules in the workspace registry.
+    Capsules(CapsulesCommand),
     /// Plan, execute, and inspect authority-preserving runs.
     Runs(RunsCommand),
     /// Import and verify exact-byte artifacts.
@@ -74,6 +78,29 @@ pub enum ToolsSubcommand {
 }
 
 #[derive(Debug, Args)]
+pub struct CapsulesCommand {
+    #[command(subcommand)]
+    pub command: CapsulesSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CapsulesSubcommand {
+    /// Import an explicit local descriptor and its exact closed runtime tree.
+    Admit {
+        #[arg(long, value_name = "FILE")]
+        descriptor: PathBuf,
+        #[arg(long, value_name = "DIRECTORY")]
+        root: PathBuf,
+    },
+    /// List verified capsules in this workspace's trusted registry.
+    List,
+    /// Show and re-verify one complete capsule record.
+    Show { capsule_id: String },
+    /// Re-hash the descriptor, launcher, support tree, and qualification evidence.
+    Verify { capsule_id: String },
+}
+
+#[derive(Debug, Args)]
 pub struct RunsCommand {
     #[command(subcommand)]
     pub command: RunsSubcommand,
@@ -98,6 +125,10 @@ pub enum RunsSubcommand {
         parameters: Vec<String>,
         #[arg(long, default_value_t = 300_000)]
         timeout_ms: u64,
+        /// Exact capsule already admitted to this workspace. Python planning still fails closed
+        /// until OS-enforced execution containment is implemented.
+        #[arg(long, value_name = "CAPSULE_ID")]
+        runtime_capsule: Option<String>,
     },
     /// Execute a previously reviewed plan after explicit capability approval.
     Execute {
@@ -150,6 +181,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
         Command::Doctor => doctor(cli),
         Command::Subjects(command) => subjects(command),
         Command::Tools(command) => tools(command),
+        Command::Capsules(command) => capsules(cli, command),
         Command::Runs(command) => runs(cli, command),
         Command::Artifacts(command) => artifacts(cli, command),
     }
@@ -322,6 +354,28 @@ fn tools(command: &ToolsCommand) -> Result<CommandOutcome> {
     }
 }
 
+fn capsules(cli: &Cli, command: &CapsulesCommand) -> Result<CommandOutcome> {
+    let workspace = open_workspace(cli)?;
+    match &command.command {
+        CapsulesSubcommand::Admit { descriptor, root } => success(
+            "capsules.admit",
+            serde_json::to_value(runtime_capsules::admit(&workspace, descriptor, root)?)?,
+        ),
+        CapsulesSubcommand::List => success(
+            "capsules.list",
+            serde_json::to_value(runtime_capsules::list_verified(&workspace)?)?,
+        ),
+        CapsulesSubcommand::Show { capsule_id } => success(
+            "capsules.show",
+            serde_json::to_value(runtime_capsules::load_verified(&workspace, capsule_id)?)?,
+        ),
+        CapsulesSubcommand::Verify { capsule_id } => success(
+            "capsules.verify",
+            serde_json::to_value(runtime_capsules::verify(&workspace, capsule_id)?)?,
+        ),
+    }
+}
+
 fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
     let workspace = open_workspace(cli)?;
     match &command.command {
@@ -332,8 +386,29 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
             input_media_type,
             parameters,
             timeout_ms,
+            runtime_capsule,
         } => {
             let manifest = manifests::get(tool)?;
+            if manifest.manifest.manifest_id == "phaseledger"
+                && manifest
+                    .manifest
+                    .identity_contract
+                    .python_distribution
+                    .is_some()
+            {
+                runtime_capsules::planning_blocker(
+                    &workspace,
+                    runtime_capsule.as_deref(),
+                    &manifest.manifest.manifest_id,
+                    &manifest.manifest.invocation_contract.operation,
+                )?;
+                unreachable!("Python planning blocker always fails closed");
+            }
+            if runtime_capsule.is_some() {
+                bail!(
+                    "--runtime-capsule planning inspection is currently restricted to phaseledger"
+                );
+            }
             if !manifest.manifest.enabled_by_default {
                 bail!("tool is cataloged but its execution adapter is disabled in this MVP");
             }

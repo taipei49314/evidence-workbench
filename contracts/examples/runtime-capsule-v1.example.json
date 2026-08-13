@@ -30,7 +30,7 @@
     "state": "complete",
     "inventory_digest": {
       "algorithm": "sha256",
-      "value": "3333333333333333333333333333333333333333333333333333333333333333"
+      "value": "8afb595b12f914d59d0a2fc11a55c1e6dd4e7588278054082ed7c5ab69c8940b"
     },
     "declared_file_count": 1,
     "inventoried_file_count": 1,
@@ -45,7 +45,7 @@
   ],
   "operation_scope": {
     "tool_manifest_id": "phaseledger",
-    "operations": ["verify"]
+    "operations": ["phaseledger_measure"]
   },
   "qualification_evidence": [
     {
