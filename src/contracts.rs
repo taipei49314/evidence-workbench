@@ -309,6 +309,26 @@ pub struct SubjectCandidate {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct SubjectCandidateRecordPayload {
+    /// SHA-256 of the exact, unmodified subject-candidate JSON bytes.
+    pub candidate_sha256: String,
+    pub candidate_artifact_id: String,
+    /// Binds the candidate's source reference to the complete immutable artifact descriptor.
+    pub source_artifact_record_digest: String,
+    pub candidate: SubjectCandidate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SubjectCandidateRecord {
+    pub schema_version: String,
+    pub candidate_id: String,
+    pub record_digest: String,
+    pub payload: SubjectCandidateRecordPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SubjectCandidateProducer {
     pub id: String,
     pub version: String,

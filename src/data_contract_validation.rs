@@ -41,11 +41,32 @@ pub fn validate_subject_candidate(candidate: &SubjectCandidate) -> Result<()> {
         bail!("subject-candidate/v1 is restricted to github-radar observations");
     }
     validate_nonempty(&candidate.producer.version, "producer version")?;
+    if candidate.producer.version.contains('\0') {
+        bail!("producer version cannot contain the candidate-id field separator");
+    }
     validate_github_repository_url(&candidate.repository_url)?;
     validate_git_sha1(&candidate.resolved_source.commit_sha, "resolved commit")?;
     validate_git_sha1(&candidate.resolved_source.tree_sha, "resolved tree")?;
     validate_timestamp(&candidate.observed_at, "candidate observation time")?;
     validate_contract_artifact_ref(&candidate.source_artifact, "source artifact")?;
+    let seed = [
+        "subject-candidate/v1",
+        "github-radar",
+        candidate.producer.version.as_str(),
+        candidate.repository_url.as_str(),
+        candidate.resolved_source.commit_sha.as_str(),
+        candidate.resolved_source.tree_sha.as_str(),
+        candidate.source_artifact.artifact_id.as_str(),
+        candidate.source_artifact.digest.value.as_str(),
+    ]
+    .join("\0");
+    let expected_id = format!(
+        "candidate_{}",
+        &hex::encode(Sha256::digest(seed.as_bytes()))[..32]
+    );
+    if candidate.candidate_id != expected_id {
+        bail!("subject candidate id does not match its content-derived identity");
+    }
     if candidate.limitations.is_empty() {
         bail!("an untrusted subject candidate must report at least one limitation");
     }
@@ -391,6 +412,7 @@ fn validate_github_repository_url(value: &str) -> Result<()> {
     if parts.len() != 2
         || parts.iter().any(|part| {
             part.is_empty()
+                || matches!(*part, "." | "..")
                 || !part
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
@@ -462,6 +484,10 @@ mod tests {
 
         let mut candidate: Value = serde_json::from_slice(SUBJECT_EXAMPLE).unwrap();
         candidate["limitations"] = json!([]);
+        assert!(parse_subject_candidate(&serde_json::to_vec(&candidate).unwrap()).is_err());
+
+        let mut candidate: Value = serde_json::from_slice(SUBJECT_EXAMPLE).unwrap();
+        candidate["producer"]["version"] = json!("0.1.0\0forged");
         assert!(parse_subject_candidate(&serde_json::to_vec(&candidate).unwrap()).is_err());
     }
 

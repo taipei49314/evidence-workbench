@@ -1,6 +1,7 @@
 use crate::contracts::{ArtifactDescriptor, PlanPayload, Subject, ToolRef};
 use crate::{
-    candidate_pins, git_subject, manifests, native, runtime_capsules, upstream_pins, workspace,
+    candidate_pins, git_subject, manifests, native, runtime_capsules, subject_candidates,
+    upstream_pins, workspace,
 };
 use anyhow::{Context, Result, bail};
 use chrono::{SecondsFormat, Utc};
@@ -40,6 +41,8 @@ pub enum Command {
     Tools(ToolsCommand),
     /// Admit and verify exact-byte runtime capsules in the workspace registry.
     Capsules(CapsulesCommand),
+    /// Import and inspect untrusted exact-byte GitHub discovery candidates.
+    Candidates(CandidatesCommand),
     /// Plan, execute, and inspect authority-preserving runs.
     Runs(RunsCommand),
     /// Import and verify exact-byte artifacts.
@@ -98,6 +101,27 @@ pub enum CapsulesSubcommand {
     Show { capsule_id: String },
     /// Re-hash the descriptor, launcher, support tree, and qualification evidence.
     Verify { capsule_id: String },
+}
+
+#[derive(Debug, Args)]
+pub struct CandidatesCommand {
+    #[command(subcommand)]
+    pub command: CandidatesSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CandidatesSubcommand {
+    /// Import exact subject-candidate/v1 bytes bound to an existing source artifact.
+    Import {
+        #[arg(long, value_name = "FILE")]
+        file: PathBuf,
+    },
+    /// List and re-verify every untrusted candidate in this workspace.
+    List,
+    /// Show one complete candidate record after re-verification.
+    Show { candidate_id: String },
+    /// Re-hash the candidate bytes, source artifact, and registry record.
+    Verify { candidate_id: String },
 }
 
 #[derive(Debug, Args)]
@@ -182,6 +206,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
         Command::Subjects(command) => subjects(command),
         Command::Tools(command) => tools(command),
         Command::Capsules(command) => capsules(cli, command),
+        Command::Candidates(command) => candidates(cli, command),
         Command::Runs(command) => runs(cli, command),
         Command::Artifacts(command) => artifacts(cli, command),
     }
@@ -372,6 +397,28 @@ fn capsules(cli: &Cli, command: &CapsulesCommand) -> Result<CommandOutcome> {
         CapsulesSubcommand::Verify { capsule_id } => success(
             "capsules.verify",
             serde_json::to_value(runtime_capsules::verify(&workspace, capsule_id)?)?,
+        ),
+    }
+}
+
+fn candidates(cli: &Cli, command: &CandidatesCommand) -> Result<CommandOutcome> {
+    let workspace = open_workspace(cli)?;
+    match &command.command {
+        CandidatesSubcommand::Import { file } => success(
+            "candidates.import",
+            serde_json::to_value(subject_candidates::import(&workspace, file)?)?,
+        ),
+        CandidatesSubcommand::List => success(
+            "candidates.list",
+            serde_json::to_value(subject_candidates::list_verified(&workspace)?)?,
+        ),
+        CandidatesSubcommand::Show { candidate_id } => success(
+            "candidates.show",
+            serde_json::to_value(subject_candidates::load_verified(&workspace, candidate_id)?)?,
+        ),
+        CandidatesSubcommand::Verify { candidate_id } => success(
+            "candidates.verify",
+            serde_json::to_value(subject_candidates::verify(&workspace, candidate_id)?)?,
         ),
     }
 }

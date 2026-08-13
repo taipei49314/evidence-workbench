@@ -1,6 +1,6 @@
 {
   "schema_version": "subject-candidate/v1",
-  "candidate_id": "candidate_00000000000000000000000000000000",
+  "candidate_id": "candidate_1ad0a6566b3666faffce625d44dde881",
   "producer": {
     "id": "github-radar",
     "version": "0.1.0"

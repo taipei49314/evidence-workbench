@@ -76,6 +76,39 @@ already exist as exact workspace artifacts. `list`, `show`, and `verify`
 revalidate registry records and EWB-owned object bytes. Capsule readiness and
 qualification do not create a native result, trust claim, or authority.
 
+### Untrusted GitHub discovery handoff
+
+`github-radar` discovery remains outside EWB's trusted execution plane. First
+capture the exact radar report with its required `github_discovery` role, then
+ask the producer to bind that existing EWB artifact record to the observed
+commit and tree. Finally import the exact candidate bytes:
+
+```powershell
+$source = ewb --json --workspace C:\evidence-workspace artifacts add `
+  --file C:\evidence\radar-report.json --role github_discovery `
+  --media-type application/json | ConvertFrom-Json
+
+python -m radar ewb-candidate --repo owner/name `
+  --source-report C:\evidence\radar-report.json `
+  --source-artifact-record (Join-Path C:\evidence-workspace ".ewb\artifacts\$($source.data.artifact_id).json") `
+  --output C:\evidence\candidate.json
+
+$candidate = ewb --json --workspace C:\evidence-workspace candidates import `
+  --file C:\evidence\candidate.json | ConvertFrom-Json
+ewb --json --workspace C:\evidence-workspace candidates verify `
+  $candidate.data.candidate_id
+```
+
+`candidates import` supports only `subject-candidate/v1`. It strictly parses
+the exact supplied bytes, re-hashes the referenced source artifact record and
+object already in the same workspace, captures the candidate itself in CAS,
+and creates a content-digested registry record. `list`, `show`, and `verify`
+repeat all checks. These commands perform no network request, clone, subject
+resolution, admission, planning, or execution. The result remains
+`trust_state: untrusted_candidate`, requires an independent EWB commit-and-tree
+re-resolution before any future admission, and always has
+`authority_effect: none`.
+
 ### Greenwash future invocation (currently fails closed)
 
 Both revisions must be exact lowercase Git object IDs and the subject checkout must be clean:

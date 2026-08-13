@@ -1,12 +1,17 @@
 use assert_cmd::Command;
-use evidence_workbench::contracts::{PlanRecord, RuntimeCapsule};
+#[cfg(windows)]
+use evidence_workbench::contracts::PlanRecord;
+use evidence_workbench::contracts::RuntimeCapsule;
 use evidence_workbench::manifests;
 use evidence_workbench::workspace::digest_serialized;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(windows)]
+use std::fs::OpenOptions;
+#[cfg(windows)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -176,6 +181,7 @@ fn test_path(fake_directory: &Path) -> OsString {
     std::env::join_paths(paths).unwrap()
 }
 
+#[cfg(windows)]
 fn plan_execution_boundary(
     workspace: &Path,
     repo: &Path,
@@ -185,6 +191,7 @@ fn plan_execution_boundary(
     plan_execution_boundary_with_timeout(workspace, repo, fake_directory, 300_000)
 }
 
+#[cfg(windows)]
 fn plan_execution_boundary_with_timeout(
     workspace: &Path,
     repo: &Path,
@@ -212,6 +219,7 @@ fn plan_execution_boundary_with_timeout(
     value
 }
 
+#[cfg(windows)]
 fn execute_execution_boundary(
     workspace: &Path,
     plan: &Value,
@@ -809,6 +817,286 @@ fn artifact_contract_rejects_empty_media_type() {
 }
 
 #[test]
+fn candidate_cli_preserves_exact_bytes_and_reverifies_untrusted_handoff() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let report = temp.path().join("radar-report.json");
+    fs::write(&report, br#"{"repository":"owner/repo","risk":"observed"}"#).unwrap();
+    let (code, source, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", "add", "--file"])
+            .arg(&report)
+            .args([
+                "--role",
+                "github_discovery",
+                "--media-type",
+                "application/json",
+            ]),
+    );
+    assert_eq!(code, 0, "{source:?} {stderr}");
+    let mut candidate = json!({
+        "schema_version": "subject-candidate/v1",
+        "candidate_id": "candidate_00000000000000000000000000000000",
+        "producer": {"id": "github-radar", "version": "0.1.0"},
+        "repository_url": "https://github.com/owner/repo",
+        "resolved_source": {
+            "commit_sha": "1".repeat(40),
+            "tree_sha": "2".repeat(40)
+        },
+        "observed_at": "2026-08-14T00:00:00Z",
+        "source_artifact": {
+            "artifact_id": source["data"]["artifact_id"],
+            "digest": source["data"]["digest"]
+        },
+        "limitations": [{
+            "code": "discovery_only",
+            "statement": "Discovery is untrusted and has not been admitted or executed."
+        }],
+        "trust_state": "untrusted_candidate",
+        "admission_requirement": "ewb_reresolve_commit_and_tree",
+        "authority_effect": "none"
+    });
+    let seed = [
+        "subject-candidate/v1",
+        "github-radar",
+        "0.1.0",
+        "https://github.com/owner/repo",
+        &"1".repeat(40),
+        &"2".repeat(40),
+        source["data"]["artifact_id"].as_str().unwrap(),
+        source["data"]["digest"]["value"].as_str().unwrap(),
+    ]
+    .join("\0");
+    let candidate_id = format!(
+        "candidate_{}",
+        &hex::encode(Sha256::digest(seed.as_bytes()))[..32]
+    );
+    candidate["candidate_id"] = Value::String(candidate_id.clone());
+    let candidate_bytes = serde_json::to_vec_pretty(&candidate).unwrap();
+    let candidate_file = temp.path().join("candidate.json");
+    fs::write(&candidate_file, &candidate_bytes).unwrap();
+
+    let (code, imported, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["candidates", "import", "--file"])
+            .arg(&candidate_file),
+    );
+    assert_eq!(code, 0, "{imported:?} {stderr}");
+    assert_eq!(imported["command"], "candidates.import");
+    assert_eq!(imported["data"]["candidate_id"], candidate_id);
+    assert_eq!(
+        imported["data"]["payload"]["candidate"]["trust_state"],
+        "untrusted_candidate"
+    );
+    assert_eq!(
+        imported["data"]["payload"]["candidate"]["authority_effect"],
+        "none"
+    );
+    let digest = imported["data"]["payload"]["candidate_sha256"]
+        .as_str()
+        .unwrap();
+    let object = temp
+        .path()
+        .join(".ewb/objects/sha256")
+        .join(&digest[..2])
+        .join(&digest[2..]);
+    assert_eq!(fs::read(object).unwrap(), candidate_bytes);
+
+    for (subcommand, expected_command) in
+        [("show", "candidates.show"), ("verify", "candidates.verify")]
+    {
+        let (code, value, stderr) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["candidates", subcommand, &candidate_id]),
+        );
+        assert_eq!(code, 0, "{value:?} {stderr}");
+        assert_eq!(value["command"], expected_command);
+        if subcommand == "verify" {
+            assert_eq!(value["data"]["verified"], true);
+            assert_eq!(value["data"]["trust_state"], "untrusted_candidate");
+            assert_eq!(value["data"]["authority_effect"], "none");
+        }
+    }
+    let (code, listed, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["candidates", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["command"], "candidates.list");
+    assert_eq!(listed["data"].as_array().unwrap().len(), 1);
+    for directory in ["plans", "runs", "capsules", "executions"] {
+        assert_eq!(
+            fs::read_dir(temp.path().join(".ewb").join(directory))
+                .unwrap()
+                .count(),
+            0,
+            "candidate import wrote to {directory}"
+        );
+    }
+}
+
+#[test]
+fn candidate_import_rejects_swapped_source_and_malformed_json_before_writing() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let mut sources = Vec::new();
+    for (name, bytes) in [
+        ("a.json", b"source-a".as_slice()),
+        ("b.json", b"source-b".as_slice()),
+    ] {
+        let path = temp.path().join(name);
+        fs::write(&path, bytes).unwrap();
+        let (code, value, stderr) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["artifacts", "add", "--file"])
+                .arg(path)
+                .args(["--role", "github_discovery"]),
+        );
+        assert_eq!(code, 0, "{value:?} {stderr}");
+        sources.push(value["data"].clone());
+    }
+    let artifact_count = fs::read_dir(temp.path().join(".ewb/artifacts"))
+        .unwrap()
+        .count();
+    let mut swapped = json!({
+        "schema_version": "subject-candidate/v1",
+        "candidate_id": "candidate_cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "producer": {"id": "github-radar", "version": "0.1.0"},
+        "repository_url": "https://github.com/owner/repo",
+        "resolved_source": {"commit_sha": "1".repeat(40), "tree_sha": "2".repeat(40)},
+        "observed_at": "2026-08-14T00:00:00Z",
+        "source_artifact": {
+            "artifact_id": sources[0]["artifact_id"],
+            "digest": sources[1]["digest"]
+        },
+        "limitations": [{"code":"discovery_only","statement":"Untrusted discovery only."}],
+        "trust_state": "untrusted_candidate",
+        "admission_requirement": "ewb_reresolve_commit_and_tree",
+        "authority_effect": "none"
+    });
+    let seed = [
+        "subject-candidate/v1",
+        "github-radar",
+        "0.1.0",
+        "https://github.com/owner/repo",
+        &"1".repeat(40),
+        &"2".repeat(40),
+        sources[0]["artifact_id"].as_str().unwrap(),
+        sources[1]["digest"]["value"].as_str().unwrap(),
+    ]
+    .join("\0");
+    swapped["candidate_id"] = Value::String(format!(
+        "candidate_{}",
+        &hex::encode(Sha256::digest(seed.as_bytes()))[..32]
+    ));
+    let swapped_file = temp.path().join("swapped.json");
+    fs::write(&swapped_file, serde_json::to_vec(&swapped).unwrap()).unwrap();
+    let (code, failure, _) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["candidates", "import", "--file"])
+            .arg(&swapped_file),
+    );
+    assert_eq!(code, 2, "{failure:?}");
+    assert_eq!(failure["ok"], false);
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("source artifact digest mismatch")
+    );
+
+    let malformed_file = temp.path().join("malformed.json");
+    fs::write(
+        &malformed_file,
+        br#"{"schema_version":"subject-candidate/v1","schema_version":"forged"}"#,
+    )
+    .unwrap();
+    let (code, failure, _) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["candidates", "import", "--file"])
+            .arg(&malformed_file),
+    );
+    assert_eq!(code, 2, "{failure:?}");
+    assert_eq!(failure["ok"], false);
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/candidates"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/artifacts"))
+            .unwrap()
+            .count(),
+        artifact_count
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn non_windows_execution_fixture_fails_before_plan_or_native_probe() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let (repo, _) = make_repo(temp.path());
+    let fake_dir = temp.path().join("fake-bin");
+    install_fake(&fake_dir);
+    let marker = temp.path().join(".fake-version-probe-ran");
+
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .current_dir(temp.path())
+            .env("PATH", test_path(&fake_dir))
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "test-execution-boundary",
+                "--subject",
+            ])
+            .arg(&repo),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert_eq!(failure["ok"], false);
+    assert_eq!(
+        failure["error"]["message"],
+        "native execution planning is disabled on this platform until descriptor-based exec removes path replacement races"
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/plans"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/artifacts"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert!(
+        !marker.exists(),
+        "planning launched the native version probe"
+    );
+}
+
+#[cfg(windows)]
+#[test]
 fn plan_never_launches_native_tool_and_execute_preserves_native_block() {
     let temp = TempDir::new().unwrap();
     init(temp.path());
@@ -885,6 +1173,7 @@ fn plan_never_launches_native_tool_and_execute_preserves_native_block() {
     }
 }
 
+#[cfg(windows)]
 #[test]
 fn execute_rejects_stale_subject_and_stale_native_binary() {
     let temp = TempDir::new().unwrap();
@@ -950,6 +1239,7 @@ fn execute_rejects_stale_subject_and_stale_native_binary() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn execute_ignores_git_path_replacement_after_plan() {
     let temp = TempDir::new().unwrap();
@@ -987,6 +1277,7 @@ fn execute_ignores_git_path_replacement_after_plan() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn execute_rejects_staged_git_identity_tamper_without_spawning() {
     let temp = TempDir::new().unwrap();
@@ -1022,6 +1313,7 @@ fn execute_rejects_staged_git_identity_tamper_without_spawning() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn execute_requires_the_reviewed_plan_digest_and_revalidates_plan_semantics() {
     let temp = TempDir::new().unwrap();
@@ -1102,8 +1394,23 @@ fn storage_ids_reject_traversal() {
         );
         assert_ne!(code, 0, "accepted {malicious:?}: {value:?}");
     }
+    for malicious in [
+        "../outside",
+        "..\\outside",
+        "C:outside",
+        "candidate_../../outside",
+    ] {
+        let (code, value, _) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["candidates", "verify", malicious]),
+        );
+        assert_ne!(code, 0, "accepted {malicious:?}: {value:?}");
+    }
 }
 
+#[cfg(windows)]
 #[test]
 fn malformed_native_json_and_timeout_never_create_a_result_or_authority() {
     let temp = TempDir::new().unwrap();
@@ -1147,6 +1454,7 @@ fn malformed_native_json_and_timeout_never_create_a_result_or_authority() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn staged_native_tamper_rejects_and_subject_mutation_suppresses_result() {
     let temp = TempDir::new().unwrap();
@@ -1217,6 +1525,7 @@ fn staged_native_tamper_rejects_and_subject_mutation_suppresses_result() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn oversized_native_output_is_interrupted_without_importing_capture() {
     let temp = TempDir::new().unwrap();

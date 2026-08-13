@@ -20,6 +20,8 @@ pub mod run_validation;
 pub mod runtime_capsules;
 #[path = "../../../src/strict_json.rs"]
 pub mod strict_json;
+#[path = "../../../src/subject_candidates.rs"]
+pub mod subject_candidates;
 #[path = "../../../src/upstream_pins.rs"]
 pub mod upstream_pins;
 #[path = "../../../src/workspace.rs"]

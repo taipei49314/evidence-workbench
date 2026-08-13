@@ -1,6 +1,6 @@
 use crate::contracts::{
     ArtifactCapture, ArtifactDescriptor, ArtifactRecord, ArtifactStorage, Digest, PlanPayload,
-    PlanRecord, RunRecord, RuntimeCapsuleRecord,
+    PlanRecord, RunRecord, RuntimeCapsuleRecord, SubjectCandidateRecord,
 };
 use crate::run_validation;
 use crate::strict_json;
@@ -67,6 +67,7 @@ impl Workspace {
             "executions",
             "locks",
             "capsules",
+            "candidates",
         ] {
             ensure_real_dir(&workspace.state.join(name))?;
         }
@@ -136,6 +137,7 @@ impl Workspace {
             "executions",
             "locks",
             "capsules",
+            "candidates",
         ] {
             validate_real_dir(&self.state.join(name))?;
         }
@@ -270,6 +272,52 @@ impl Workspace {
         Ok(records)
     }
 
+    pub fn write_subject_candidate(&self, record: &SubjectCandidateRecord) -> Result<()> {
+        validate_prefixed_id(&record.candidate_id, "candidate_")?;
+        let path = self
+            .state
+            .join("candidates")
+            .join(format!("{}.json", record.candidate_id));
+        self.write_json_atomic(&path, record, true)
+    }
+
+    pub fn load_subject_candidate(&self, candidate_id: &str) -> Result<SubjectCandidateRecord> {
+        validate_prefixed_id(candidate_id, "candidate_")?;
+        let path = self
+            .state
+            .join("candidates")
+            .join(format!("{candidate_id}.json"));
+        let record: SubjectCandidateRecord = read_strict_json(&path)?;
+        if record.candidate_id != candidate_id {
+            bail!("subject candidate record filename identity mismatch");
+        }
+        Ok(record)
+    }
+
+    pub fn list_subject_candidates(&self) -> Result<Vec<SubjectCandidateRecord>> {
+        let mut records = Vec::new();
+        for entry in fs::read_dir(self.state.join("candidates"))? {
+            let entry = entry?;
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if !metadata.is_file() || is_reparse(&metadata) {
+                bail!("subject candidate registry may contain only regular non-link files");
+            }
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                bail!("subject candidate registry contains an unexpected file");
+            }
+            let id = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("subject candidate record has a non-UTF-8 filename")
+                })?;
+            records.push(self.load_subject_candidate(id)?);
+        }
+        records.sort_by(|left, right| left.candidate_id.cmp(&right.candidate_id));
+        Ok(records)
+    }
+
     pub fn import_artifact(
         &self,
         source: &Path,
@@ -278,29 +326,7 @@ impl Workspace {
         origin: &str,
         capture_mode: &str,
     ) -> Result<ArtifactDescriptor> {
-        if roles.is_empty() {
-            bail!("artifact must have at least one role");
-        }
-        let mut unique_roles = BTreeSet::new();
-        for role in &roles {
-            let valid = !role.is_empty()
-                && role.len() <= 64
-                && role
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
-            if !valid || !unique_roles.insert(role) {
-                bail!("artifact roles must be unique lowercase ASCII identifiers");
-            }
-        }
-        if media_type.is_empty() || media_type.trim() != media_type {
-            bail!("artifact media type must be a non-empty trimmed string");
-        }
-        if !matches!(origin, "native_file" | "process_stdout" | "process_stderr") {
-            bail!("artifact origin is outside the v1 contract");
-        }
-        if !matches!(capture_mode, "byte_for_byte_copy" | "raw_stream_capture") {
-            bail!("artifact capture mode is outside the v1 contract");
-        }
+        validate_artifact_capture_contract(&roles, &media_type, origin, capture_mode)?;
         let source_meta = fs::symlink_metadata(source)
             .with_context(|| format!("cannot stat artifact source {}", source.display()))?;
         if !source_meta.is_file() || is_reparse(&source_meta) {
@@ -344,6 +370,58 @@ impl Workspace {
         ensure_real_dir(object_path.parent().expect("object path has parent"))?;
         commit_content_object(&temp_path, &object_path, &digest, length)?;
 
+        let descriptor = ArtifactDescriptor {
+            artifact_id: format!("artifact_{}", Uuid::new_v4().simple()),
+            roles,
+            media_type,
+            byte_length: length,
+            digest: Digest {
+                algorithm: "sha256".to_owned(),
+                value: digest.clone(),
+            },
+            storage: ArtifactStorage {
+                uri: format!("ewb:sha256:{digest}"),
+            },
+            origin: origin.to_owned(),
+            capture: ArtifactCapture {
+                mode: capture_mode.to_owned(),
+            },
+            transforms: Vec::new(),
+        };
+        self.write_artifact_record(&descriptor)?;
+        Ok(descriptor)
+    }
+
+    /// Commit bytes that the caller has already read and validated. This is used
+    /// by strict JSON registries so malformed input can fail before any CAS or
+    /// artifact record is created, while the bytes parsed are exactly the bytes
+    /// captured.
+    pub fn import_artifact_bytes(
+        &self,
+        bytes: &[u8],
+        roles: Vec<String>,
+        media_type: String,
+        origin: &str,
+        capture_mode: &str,
+    ) -> Result<ArtifactDescriptor> {
+        validate_artifact_capture_contract(&roles, &media_type, origin, capture_mode)?;
+        let length = u64::try_from(bytes.len()).context("artifact byte length overflow")?;
+        let digest = hex::encode(Sha256::digest(bytes));
+        let temp_path = self
+            .state
+            .join("tmp")
+            .join(format!("object-{}.tmp", Uuid::new_v4().simple()));
+        let mut output = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)?;
+        output.write_all(bytes)?;
+        output.sync_all()?;
+        drop(output);
+
+        let object_path = self.object_path(&digest)?;
+        ensure_real_dir(object_path.parent().expect("object path has parent"))?;
+        commit_content_object(&temp_path, &object_path, &digest, length)?;
         let descriptor = ArtifactDescriptor {
             artifact_id: format!("artifact_{}", Uuid::new_v4().simple()),
             roles,
@@ -589,6 +667,38 @@ impl Workspace {
         validate_real_dir(&self.state.join("tmp"))?;
         Ok(())
     }
+}
+
+fn validate_artifact_capture_contract(
+    roles: &[String],
+    media_type: &str,
+    origin: &str,
+    capture_mode: &str,
+) -> Result<()> {
+    if roles.is_empty() {
+        bail!("artifact must have at least one role");
+    }
+    let mut unique_roles = BTreeSet::new();
+    for role in roles {
+        let valid = !role.is_empty()
+            && role.len() <= 64
+            && role
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+        if !valid || !unique_roles.insert(role) {
+            bail!("artifact roles must be unique lowercase ASCII identifiers");
+        }
+    }
+    if media_type.is_empty() || media_type.trim() != media_type {
+        bail!("artifact media type must be a non-empty trimmed string");
+    }
+    if !matches!(origin, "native_file" | "process_stdout" | "process_stderr") {
+        bail!("artifact origin is outside the v1 contract");
+    }
+    if !matches!(capture_mode, "byte_for_byte_copy" | "raw_stream_capture") {
+        bail!("artifact capture mode is outside the v1 contract");
+    }
+    Ok(())
 }
 
 pub fn digest_file(path: &Path) -> Result<(String, u64)> {
