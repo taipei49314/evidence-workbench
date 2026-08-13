@@ -1,0 +1,49 @@
+{
+  "schema_version": "upstream_pin/v1",
+  "tool_manifest_id": "walkaround",
+  "repository_url": "https://github.com/taipei49314/walkaround",
+  "source": {
+    "default_branch": "main",
+    "commit_sha": "0ecf7b206201fb670778639e4bf04ed58b6a797c",
+    "tree_sha": "eb6dea58f0e4db601be7dfae28c56d0c72b59bd3"
+  },
+  "software_version": "0.4.0",
+  "release": null,
+  "evidence": [
+    {
+      "kind": "workflow_run",
+      "id": "31724500299",
+      "name": "ci",
+      "subject_commit_sha": "0ecf7b206201fb670778639e4bf04ed58b6a797c",
+      "sha256": null,
+      "size_bytes": null,
+      "status": "success",
+      "expires_at": null
+    }
+  ],
+  "runtime": {
+    "kind": "python",
+    "target_os": "any",
+    "target_arch": "any",
+    "version_constraint": ">=3.10",
+    "interpreter_included": false,
+    "transitive_dependencies_included": false,
+    "self_contained": false,
+    "external_tools": ["git"]
+  },
+  "native_posture": { "status": "ALPHA_SOURCE_VERIFIED", "release_eligible": null },
+  "execution_readiness": {
+    "state": "fail_closed",
+    "scope": "session_admission",
+    "blocker_codes": [
+      "adapter_not_implemented",
+      "ambient_git_not_bound",
+      "mutable_session_subject_not_implemented",
+      "operation_capabilities_not_separated",
+      "python_interpreter_not_included",
+      "python_runtime_snapshot_unimplemented"
+    ]
+  },
+  "admission": { "evidence_integrity_state": "source_verified", "authority_effect": "none" },
+  "license_spdx": "Apache-2.0"
+}

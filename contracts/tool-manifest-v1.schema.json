@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench trusted tool manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "manifest_id", "display_name", "stability", "enabled_by_default",
+    "adapter", "identity_contract", "subject_kind", "invocation_contract", "artifact_contracts",
+    "native_observation_contracts", "exit_code_contract", "authority_contract", "limitations"
+  ],
+  "properties": {
+    "schema_version": { "const": "tool_manifest/v1" },
+    "manifest_id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$" },
+    "display_name": { "type": "string", "minLength": 1 },
+    "stability": { "enum": ["stable", "experimental"] },
+    "enabled_by_default": { "type": "boolean" },
+    "adapter": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version"],
+      "properties": { "id": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 } }
+    },
+    "identity_contract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["executable_candidates", "version_probe", "binary_digest_required", "python_distribution", "supporting_tree_digest_required"],
+      "properties": {
+        "executable_candidates": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" } },
+        "version_probe": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false, "required": ["arguments"],
+              "properties": { "arguments": { "type": "array", "items": { "type": "string" } } }
+            }
+          ]
+        },
+        "binary_digest_required": { "const": true },
+        "allowed_binary_sha256": {
+          "type": "array", "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "python_distribution": { "type": ["string", "null"] },
+        "supporting_tree_digest_required": { "type": "boolean" }
+      }
+    },
+    "subject_kind": { "enum": ["git", "artifact", "self_foundation"] },
+    "invocation_contract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "operation", "parameters", "required_capabilities", "target_code_execution", "network", "filesystem_write"],
+      "properties": {
+        "mode": { "const": "direct_exec" },
+        "operation": { "type": "string", "minLength": 1 },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "required", "kind", "default", "allowed_values", "minimum", "maximum"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+              "required": { "type": "boolean" },
+              "kind": { "enum": ["git_revision", "enum", "integer", "identifier"] },
+              "default": { "type": ["string", "null"] },
+              "allowed_values": { "type": "array", "items": { "type": "string" } },
+              "minimum": { "type": ["integer", "null"] },
+              "maximum": { "type": ["integer", "null"] }
+            }
+          }
+        },
+        "required_capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" } },
+        "target_code_execution": { "type": "string" },
+        "network": { "type": "string" },
+        "filesystem_write": { "type": "string" }
+      }
+    },
+    "artifact_contracts": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["role", "discovery", "required_when", "byte_policy"],
+        "properties": {
+          "role": { "type": "string" }, "discovery": { "type": "string" },
+          "required_when": { "type": "string" }, "byte_policy": { "const": "exact" }
+        }
+      }
+    },
+    "native_observation_contracts": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["namespace", "name", "artifact_role", "format", "selector", "required_when", "unknown_value_policy"],
+        "properties": {
+          "namespace": { "type": "string" }, "name": { "type": "string" },
+          "artifact_role": { "type": "string" }, "format": { "enum": ["json", "text_prefix"] },
+          "selector": { "type": "string" }, "required_when": { "type": "string" },
+          "unknown_value_policy": { "const": "preserve_unrecognized" }
+        }
+      }
+    },
+    "exit_code_contract": {
+      "type": "object", "additionalProperties": false, "required": ["entries", "unknown_code_policy"],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["code", "native_meaning"],
+            "properties": { "code": { "type": "integer" }, "native_meaning": { "type": "string" } }
+          }
+        },
+        "unknown_code_policy": { "const": "preserve_unrecognized" }
+      }
+    },
+    "authority_contract": {
+      "type": "object", "additionalProperties": false, "required": ["mode"],
+      "properties": { "mode": { "const": "not_reported" } }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["code", "statement"],
+        "properties": { "code": { "type": "string" }, "statement": { "type": "string" } }
+      }
+    }
+  }
+}

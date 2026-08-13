@@ -1,0 +1,10 @@
+{
+  "schema_version":"upstream_pin/v1","tool_manifest_id":"nullbench","repository_url":"https://github.com/taipei49314/nullbench",
+  "source":{"default_branch":"master","commit_sha":"5c8b71eb57a1f29e72ecbadcfe2ec1894e38580a","tree_sha":"7edf2937e4d110ff6c489f7ab375cfcb33ae2dce"},
+  "software_version":"0.8.2","release":null,
+  "evidence":[{"kind":"workflow_run","id":"31581707587","name":"CI","subject_commit_sha":"5c8b71eb57a1f29e72ecbadcfe2ec1894e38580a","sha256":null,"size_bytes":null,"status":"success","expires_at":null}],
+  "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.11","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":[]},
+  "native_posture":{"status":"ALPHA_SOURCE_VERIFIED","release_eligible":null},
+  "execution_readiness":{"state":"fail_closed","scope":"preregistered_experiment","blocker_codes":["adapter_not_implemented","compiled_dependencies_not_included","directory_subject_not_implemented","operation_capabilities_not_separated","python_interpreter_not_included"]},
+  "admission":{"evidence_integrity_state":"source_verified","authority_effect":"none"},"license_spdx":"MIT"
+}

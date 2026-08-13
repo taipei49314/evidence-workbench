@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / rust stable
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - name: Select Rust toolchain
+        shell: pwsh
+        run: rustup default stable
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint all targets
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Test production crate
+        run: cargo test --locked --all-targets --all-features
+      - name: Test excluded execution-boundary harness
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath tests/harness/Cargo.toml) {
+            cargo test --locked --manifest-path tests/harness/Cargo.toml
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+  package:
+    name: packaged-source boundary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: Select Rust toolchain
+        run: rustup default stable
+      - name: Verify package contents and build
+        run: cargo package --locked
+      - name: Install packaged production binary
+        run: cargo install --locked --path . --root target/ci-install
+      - name: Verify production registry remains fail-closed
+        shell: pwsh
+        run: |
+          $tools = & target/ci-install/bin/ewb --json tools list | ConvertFrom-Json
+          if (-not $tools.ok) { throw "tools list failed" }
+          if (@($tools.data | Where-Object planning_supported).Count -ne 0) {
+            throw "a production adapter became runnable without explicit qualification"
+          }
+          if (@($tools.data | Where-Object { $_.upstream_pin.authority_effect -ne 'none' }).Count -ne 0) {
+            throw "an upstream pin acquired authority"
+          }

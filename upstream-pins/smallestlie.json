@@ -1,0 +1,10 @@
+{
+  "schema_version":"upstream_pin/v1","tool_manifest_id":"smallestlie","repository_url":"https://github.com/taipei49314/smallestlie",
+  "source":{"default_branch":"master","commit_sha":"4bc124de34d5a46fcc5d45a95ff37c4566cb2016","tree_sha":"70347109eb7d1acca0b1fbca46c319b4a9b7914c"},
+  "software_version":"0.7.1","release":null,
+  "evidence":[{"kind":"workflow_run","id":"31666730235","name":"smallestlie-nightly","subject_commit_sha":"4bc124de34d5a46fcc5d45a95ff37c4566cb2016","sha256":null,"size_bytes":null,"status":"success","expires_at":null}],
+  "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.12","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":[]},
+  "native_posture":{"status":"SOURCE_VERIFIED_AUTHORIZATION_REQUIRED","release_eligible":null},
+  "execution_readiness":{"state":"fail_closed","scope":"authorized_falsification","blocker_codes":["adapter_not_implemented","authorization_contract_not_implemented","os_egress_containment_not_implemented","process_tree_containment_not_implemented","python_interpreter_not_included","runtime_lock_version_drift"]},
+  "admission":{"evidence_integrity_state":"source_verified","authority_effect":"none"},"license_spdx":"MIT"
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version":"upstream_pin/v1","tool_manifest_id":"trust-meter","repository_url":"https://github.com/taipei49314/trust-meter",
+  "source":{"default_branch":"master","commit_sha":"353b2aa81548d14ad394fe46d548e93c8c39a842","tree_sha":"ce0e076bdf6ad02d3c0a69b1c6e1afc6e5d0a79e"},
+  "software_version":"0.1.0","release":null,
+  "evidence":[{"kind":"workflow_run","id":"31479387726","name":"Trust Meter CI","subject_commit_sha":"353b2aa81548d14ad394fe46d548e93c8c39a842","sha256":null,"size_bytes":null,"status":"success","expires_at":null}],
+  "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.9","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":[]},
+  "native_posture":{"status":"SOURCE_VERIFIED_ADVISORY_MEASURE","release_eligible":null},
+  "execution_readiness":{"state":"fail_closed","scope":"advisory_measure","blocker_codes":["ambient_ancestor_config_not_isolated","license_file_missing","python_interpreter_not_included","python_runtime_snapshot_unimplemented"]},
+  "admission":{"evidence_integrity_state":"source_verified","authority_effect":"none"},"license_spdx":"NOASSERTION"
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": "tool_manifest/v1", "manifest_id": "nullbench", "display_name": "nullbench preregistered experiment", "stability": "experimental", "enabled_by_default": false,
+  "adapter": { "id": "catalog-only-nullbench", "version": "1" },
+  "identity_contract": { "executable_candidates": ["nullbench"], "version_probe": { "arguments": ["version"] }, "binary_digest_required": true, "python_distribution": "nullbench", "supporting_tree_digest_required": true },
+  "subject_kind": "artifact",
+  "invocation_contract": { "mode": "direct_exec", "operation": "catalog_only", "parameters": [], "required_capabilities": ["write_experiment_ledger"], "target_code_execution": "plugin_dependent", "network": "mode_dependent", "filesystem_write": "study_workspace" },
+  "artifact_contracts": [], "native_observation_contracts": [],
+  "exit_code_contract": { "entries": [], "unknown_code_policy": "preserve_unrecognized" },
+  "authority_contract": { "mode": "not_reported" },
+  "limitations": [
+    { "code": "adapter_not_implemented", "statement": "Catalog entry only; execution is disabled in this MVP." },
+    { "code": "runtime_and_directory_subject_missing", "statement": "The current source has no complete locked Windows dependency closure, and a study is a directory rather than EWB's current single-file artifact subject." },
+    { "code": "operations_require_separation", "statement": "Read-only status, study mutation, network ingestion, plugin execution, browser, notary, and subprocess operations require distinct future adapters and capabilities." },
+    { "code": "not_a_repo_verdict", "statement": "nullbench produces preregistered decision-vs-chance evidence, not repository PASS or FAIL." }
+  ]
+}

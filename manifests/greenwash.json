@@ -1,0 +1,50 @@
+{
+  "schema_version": "tool_manifest/v1",
+  "manifest_id": "greenwash",
+  "display_name": "Greenwash exact-range check",
+  "stability": "experimental",
+  "enabled_by_default": false,
+  "adapter": { "id": "greenwash-exact-range", "version": "1" },
+  "identity_contract": {
+    "executable_candidates": ["greenwash"],
+    "version_probe": { "arguments": ["--version"] },
+    "binary_digest_required": true,
+    "python_distribution": "greenwash",
+    "supporting_tree_digest_required": true
+  },
+  "subject_kind": "git",
+  "invocation_contract": {
+    "mode": "direct_exec",
+    "operation": "greenwash_exact_range",
+    "parameters": [
+      { "name": "base_revision", "required": true, "kind": "git_revision", "default": null, "allowed_values": [], "minimum": null, "maximum": null },
+      { "name": "comparison", "required": false, "kind": "enum", "default": "two_dot", "allowed_values": ["two_dot", "three_dot"], "minimum": null, "maximum": null }
+    ],
+    "required_capabilities": ["read_subject", "invoke_fixed_git"],
+    "target_code_execution": "none",
+    "network": "none",
+    "filesystem_write": "none"
+  },
+  "artifact_contracts": [
+    { "role": "native_stdout", "discovery": "captured_stream", "required_when": "spawned", "byte_policy": "exact" },
+    { "role": "native_stderr", "discovery": "captured_stream", "required_when": "spawned", "byte_policy": "exact" }
+  ],
+  "native_observation_contracts": [
+    { "namespace": "greenwash", "name": "verdict", "artifact_role": "native_stdout", "format": "json", "selector": "/verdict", "required_when": "process_exited", "unknown_value_policy": "preserve_unrecognized" }
+  ],
+  "exit_code_contract": {
+    "entries": [
+      { "code": 0, "native_meaning": "pass" },
+      { "code": 1, "native_meaning": "block" },
+      { "code": 2, "native_meaning": "engine_error" }
+    ],
+    "unknown_code_policy": "preserve_unrecognized"
+  },
+  "authority_contract": { "mode": "not_reported" },
+  "limitations": [
+    { "code": "python_runtime_closure_missing", "statement": "No admitted Windows capsule currently binds CPython, the Greenwash package, and its complete runtime closure." },
+    { "code": "git_metadata_and_identity_required", "statement": "Greenwash requires Git metadata and invokes Git; EWB's plain execution tree deliberately omits .git and no execution-time Git identity is admitted." },
+    { "code": "diff_integrity_only", "statement": "This adapter checks verification-layer changes; it is not a general correctness or security scanner." },
+    { "code": "direct_process_not_os_sandbox", "statement": "Capability approval constrains this adapter invocation; it is not an operating-system sandbox." }
+  ]
+}

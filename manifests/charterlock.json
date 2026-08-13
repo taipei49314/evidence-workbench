@@ -1,0 +1,36 @@
+{
+  "schema_version": "tool_manifest/v1",
+  "manifest_id": "charterlock",
+  "display_name": "charterlock exam admission",
+  "stability": "experimental",
+  "enabled_by_default": false,
+  "adapter": { "id": "catalog-only-charterlock", "version": "1" },
+  "identity_contract": {
+    "executable_candidates": ["charterlock"],
+    "version_probe": null,
+    "binary_digest_required": true,
+    "python_distribution": "charterlock",
+    "supporting_tree_digest_required": true
+  },
+  "subject_kind": "artifact",
+  "invocation_contract": {
+    "mode": "direct_exec",
+    "operation": "catalog_only",
+    "parameters": [],
+    "required_capabilities": ["read_artifact"],
+    "target_code_execution": "none",
+    "network": "none_expected",
+    "filesystem_write": "operation_dependent"
+  },
+  "artifact_contracts": [],
+  "native_observation_contracts": [],
+  "exit_code_contract": { "entries": [], "unknown_code_policy": "preserve_unrecognized" },
+  "authority_contract": { "mode": "not_reported" },
+  "limitations": [
+    { "code": "adapter_not_implemented", "statement": "Catalog entry only; execution is disabled in this MVP." },
+    { "code": "python_runtime_closure_missing", "statement": "No admitted capsule binds exact CPython, its standard library, and the pinned charterlock distribution." },
+    { "code": "multi_artifact_subject_missing", "statement": "The measurer needs separately bound charter, keyring, executor identities, execution time, and journey or claim inputs; EWB has no admitted input-set contract for them." },
+    { "code": "operations_require_separation", "statement": "Read-only measurement and maturity checks must be separated from key generation and signing operations that write secret-bearing files." },
+    { "code": "independence_not_claimed", "statement": "CHARTER_SPLIT does not prove two people, two organizations, or absence of collusion; upstream independence_claim remains not_claimed." }
+  ]
+}

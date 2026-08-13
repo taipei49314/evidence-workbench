@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench instrument run envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "tool_ref", "resolved_tool_identity", "recorder_identity",
+    "adapter", "subject", "parameters", "invocation", "started_at", "finished_at", "termination", "artifacts",
+    "native_result", "native_authority", "limitations"
+  ],
+  "properties": {
+    "schema_version": { "const": "instrument_run/v1" },
+    "run_id": { "type": "string", "pattern": "^run_[0-9a-f]{32}$" },
+    "tool_ref": { "$ref": "#/$defs/tool_ref" },
+    "resolved_tool_identity": { "$ref": "#/$defs/binary_identity" },
+    "recorder_identity": { "$ref": "#/$defs/recorder_identity" },
+    "adapter": { "$ref": "#/$defs/adapter_identity" },
+    "subject": { "$ref": "#/$defs/subject" },
+    "parameters": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_]+$" },
+      "additionalProperties": { "type": "string" }
+    },
+    "invocation": { "$ref": "#/$defs/invocation" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "termination": { "$ref": "#/$defs/termination" },
+    "artifacts": { "type": "array", "items": { "$ref": "artifact-descriptor-v1.schema.json" } },
+    "native_result": { "$ref": "#/$defs/native_result" },
+    "native_authority": { "$ref": "#/$defs/native_authority" },
+    "limitations": { "$ref": "#/$defs/limitations" }
+  },
+  "$defs": {
+    "tool_ref": {
+      "type": "object", "additionalProperties": false, "required": ["manifest_id", "manifest_sha256"],
+      "properties": {
+        "manifest_id": { "type": "string" },
+        "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "binary_identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes", "supporting_files_sha256", "supporting_file_count", "reported_version", "source_path", "snapshot_artifact_id"],
+      "properties": {
+        "path": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "supporting_files_sha256": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[0-9a-f]{64}$" }] },
+        "supporting_file_count": { "type": "integer", "minimum": 0 },
+        "reported_version": { "type": ["string", "null"] },
+        "source_path": { "type": "string", "minLength": 1 },
+        "snapshot_artifact_id": { "type": "string", "pattern": "^artifact_[0-9a-f]{32}$" }
+      }
+    },
+    "recorder_identity": {
+      "type": "object", "additionalProperties": false, "required": ["version", "executable_sha256"],
+      "properties": { "version": { "type": "string" }, "executable_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+    },
+    "adapter_identity": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version", "implementation_sha256"],
+      "properties": {
+        "id": { "type": "string" }, "version": { "type": "string" },
+        "implementation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "revision": {
+      "type": "object", "additionalProperties": false, "required": ["role", "algorithm", "value"],
+      "properties": {
+        "role": { "type": "string" }, "algorithm": { "enum": ["git-sha1", "git-sha256"] },
+        "value": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" }
+      }
+    },
+    "subject": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "repository", "original_root", "revisions", "worktree_state", "snapshot"],
+          "properties": {
+            "kind": { "const": "git" }, "repository": { "type": "string" }, "original_root": { "type": "string" },
+            "revisions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/revision" } },
+            "worktree_state": { "const": "clean" }, "snapshot": { "$ref": "#/$defs/git_subject_snapshot" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "sha256", "byte_length", "media_type", "source_run_id", "source_artifact_id", "snapshot"],
+          "properties": {
+            "kind": { "const": "artifact" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "byte_length": { "type": "integer", "minimum": 0 }, "media_type": { "type": "string" },
+            "source_run_id": { "type": "null" }, "source_artifact_id": { "type": "string" },
+            "snapshot": { "$ref": "#/$defs/artifact_subject_snapshot" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "tool_manifest_id"],
+          "properties": { "kind": { "const": "self_foundation" }, "tool_manifest_id": { "type": "string" } }
+        }
+      ]
+    },
+    "subject_snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "artifact_id", "sha256", "byte_length", "execution_path",
+        "tree_artifact_id", "tree_sha256", "tree_byte_length", "tree_file_count", "git_plan_tool"
+      ],
+      "properties": {
+        "artifact_id": { "type": "string", "pattern": "^artifact_[0-9a-f]{32}$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "byte_length": { "type": "integer", "minimum": 0 },
+        "execution_path": { "type": "string", "minLength": 1 },
+        "tree_artifact_id": { "type": ["string", "null"], "pattern": "^artifact_[0-9a-f]{32}$" },
+        "tree_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "tree_byte_length": { "type": ["integer", "null"], "minimum": 0 },
+        "tree_file_count": { "type": ["integer", "null"], "minimum": 0 },
+        "git_plan_tool": {
+          "oneOf": [
+            { "$ref": "#/$defs/git_plan_tool_identity" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "git_subject_snapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/subject_snapshot" },
+        {
+          "properties": {
+            "tree_artifact_id": { "type": "string", "pattern": "^artifact_[0-9a-f]{32}$" },
+            "tree_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "tree_byte_length": { "type": "integer", "minimum": 0 },
+            "tree_file_count": { "type": "integer", "minimum": 0 },
+            "git_plan_tool": { "$ref": "#/$defs/git_plan_tool_identity" }
+          }
+        }
+      ]
+    },
+    "artifact_subject_snapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/subject_snapshot" },
+        {
+          "properties": {
+            "tree_artifact_id": { "type": "null" },
+            "tree_sha256": { "type": "null" },
+            "tree_byte_length": { "type": "null" },
+            "tree_file_count": { "type": "null" },
+            "git_plan_tool": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "git_plan_tool_identity": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "source_path", "source_sha256", "source_size_bytes", "snapshot_artifact_id",
+        "staged_path", "use_scope", "runtime_closure"
+      ],
+      "properties": {
+        "source_path": { "type": "string", "minLength": 1 },
+        "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "source_size_bytes": { "type": "integer", "minimum": 0 },
+        "snapshot_artifact_id": { "type": "string", "pattern": "^artifact_[0-9a-f]{32}$" },
+        "staged_path": { "type": "string", "minLength": 1 },
+        "use_scope": { "const": "plan_only_locked_source" },
+        "runtime_closure": { "const": "host_installation_not_snapshotted_never_used_at_execute" }
+      }
+    },
+    "invocation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "argv", "cwd", "timeout_ms", "required_capabilities"],
+      "properties": {
+        "mode": { "const": "direct_exec" }, "argv": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "cwd": { "type": "string" }, "timeout_ms": { "type": "integer", "minimum": 1 },
+        "required_capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+      }
+    },
+    "termination": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "exit_code"], "properties": { "kind": { "const": "exited" }, "exit_code": { "type": "integer" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "signal"], "properties": { "kind": { "const": "signaled" }, "signal": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "timeout_ms"], "properties": { "kind": { "const": "timed_out" }, "timeout_ms": { "type": "integer", "minimum": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "error_code", "message"], "properties": { "kind": { "const": "spawn_error" }, "error_code": { "type": "string" }, "message": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "reason"], "properties": { "kind": { "const": "interrupted" }, "reason": { "type": "string" } } }
+      ]
+    },
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "artifact_id", "locator"],
+      "properties": {
+        "kind": { "const": "artifact" }, "artifact_id": { "type": "string" },
+        "locator": {
+          "type": "object", "additionalProperties": false, "required": ["kind", "value"],
+          "properties": { "kind": { "enum": ["json_pointer", "byte_range"] }, "value": { "type": "string" } }
+        }
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["namespace", "name", "value", "source", "projection_only"],
+      "properties": {
+        "namespace": { "type": "string" }, "name": { "type": "string" }, "value": {},
+        "source": { "$ref": "#/$defs/source" }, "projection_only": { "const": true }
+      }
+    },
+    "native_result": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["availability", "observations"],
+          "properties": { "availability": { "const": "reported" }, "observations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/observation" } } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["availability", "reason", "observations"],
+          "properties": {
+            "availability": { "const": "not_reported" },
+            "reason": { "enum": ["process_not_exited", "native_result_absent", "artifact_missing", "parse_error", "contract_mismatch", "unrecognized"] },
+            "observations": { "type": "array", "maxItems": 0 }
+          }
+        }
+      ]
+    },
+    "native_authority": {
+      "type": "object", "additionalProperties": false, "required": ["availability", "reason", "claims"],
+      "properties": { "availability": { "const": "not_reported" }, "reason": { "type": "string", "minLength": 1 }, "claims": { "type": "array", "maxItems": 0 } }
+    },
+    "limitation_item": {
+      "type": "object", "additionalProperties": false,
+      "required": ["namespace", "code", "statement", "origin", "source"],
+      "properties": {
+        "namespace": { "type": "string" }, "code": { "type": "string" }, "statement": { "type": "string" },
+        "origin": { "enum": ["native", "manifest", "adapter"] }, "source": { "type": "string" }
+      }
+    },
+    "limitations": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["availability", "items"], "properties": { "availability": { "const": "reported" }, "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/limitation_item" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["availability", "items"], "properties": { "availability": { "const": "not_reported" }, "items": { "type": "array", "maxItems": 0 } } }
+      ]
+    }
+  }
+}

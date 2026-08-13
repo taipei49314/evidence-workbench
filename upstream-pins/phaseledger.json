@@ -1,0 +1,10 @@
+{
+  "schema_version":"upstream_pin/v1","tool_manifest_id":"phaseledger","repository_url":"https://github.com/taipei49314/phaseledger",
+  "source":{"default_branch":"main","commit_sha":"003ea065020bf952428fbd774cf24fa9373b352c","tree_sha":"2737ef0982a1bfa5088372b65a9541a3b664ce33"},
+  "software_version":"0.5.0","release":null,
+  "evidence":[{"kind":"workflow_run","id":"31479427686","name":"CI","subject_commit_sha":"003ea065020bf952428fbd774cf24fa9373b352c","sha256":null,"size_bytes":null,"status":"success","expires_at":null}],
+  "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.10","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":[]},
+  "native_posture":{"status":"SOURCE_VERIFIED","release_eligible":null},
+  "execution_readiness":{"state":"fail_closed","scope":"strict_measure","blocker_codes":["python_interpreter_not_included","python_runtime_snapshot_unimplemented"]},
+  "admission":{"evidence_integrity_state":"source_verified","authority_effect":"none"},"license_spdx":"Apache-2.0"
+}

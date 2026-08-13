@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench upstream candidate pin v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "tool_manifest_id", "repository_url", "source", "candidate",
+    "runtime_target", "inventory", "native_posture", "provenance", "workbench_admission"
+  ],
+  "properties": {
+    "schema_version": { "const": "candidate_pin/v1" },
+    "tool_manifest_id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$" },
+    "repository_url": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["commit_sha", "tree_sha"],
+      "properties": {
+        "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tree_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "payload_manifest_sha256", "receipt_sha256", "actions_artifact_id",
+        "actions_artifact_name", "actions_artifact_sha256", "workflow_run_id",
+        "workflow_run_url", "expires_at"
+      ],
+      "properties": {
+        "payload_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "actions_artifact_id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "actions_artifact_name": { "type": "string", "minLength": 1 },
+        "actions_artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "workflow_run_id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "workflow_run_url": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[1-9][0-9]*$" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "runtime_target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["os", "arch", "implementation", "python_version", "python_abi", "interpreter_included"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "implementation": { "type": "string", "minLength": 1 },
+        "python_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "python_abi": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "interpreter_included": { "type": "boolean" }
+      }
+    },
+    "inventory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["workspace_wheels", "vendored_runtime_wheels", "manifest_artifacts", "checksum_entries"],
+      "properties": {
+        "workspace_wheels": { "type": "integer", "minimum": 1 },
+        "vendored_runtime_wheels": { "type": "integer", "minimum": 1 },
+        "manifest_artifacts": { "type": "integer", "minimum": 1 },
+        "checksum_entries": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "native_posture": {
+      "type": "object", "additionalProperties": false, "required": ["status", "release_eligible"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "release_eligible": { "type": "boolean" }
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "attestation_actions_artifact_id", "attestation_actions_artifact_sha256",
+        "attestation_bundle_sha256", "download_verification_actions_artifact_id",
+        "download_verification_actions_artifact_sha256", "download_verification_receipt_sha256",
+        "signer_workflow", "signer_digest", "deny_self_hosted_runners"
+      ],
+      "properties": {
+        "attestation_actions_artifact_id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "attestation_actions_artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "attestation_bundle_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "download_verification_actions_artifact_id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "download_verification_actions_artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "download_verification_receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signer_workflow": { "type": "string", "minLength": 1 },
+        "signer_digest": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "deny_self_hosted_runners": { "const": true }
+      }
+    },
+    "workbench_admission": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "implementation_state", "evidence_integrity_state", "checksum_entries_verified",
+        "attestation_verified", "attestation_subject_sha256", "verified_at", "authority_effect"
+      ],
+      "properties": {
+        "implementation_state": { "const": "candidate_complete" },
+        "evidence_integrity_state": { "const": "verified_at_admission" },
+        "checksum_entries_verified": { "type": "integer", "minimum": 1 },
+        "attestation_verified": { "const": true },
+        "attestation_subject_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "verified_at": { "type": "string", "format": "date-time" },
+        "authority_effect": { "const": "none" }
+      }
+    }
+  }
+}

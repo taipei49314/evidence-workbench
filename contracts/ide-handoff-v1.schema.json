@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench reference-only IDE handoff v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "handoff_id",
+    "created_at",
+    "plan_refs",
+    "run_refs",
+    "artifact_refs",
+    "native_namespaces",
+    "native_authority_availability",
+    "authority_effect"
+  ],
+  "properties": {
+    "schema_version": { "const": "ide-handoff/v1" },
+    "handoff_id": { "type": "string", "pattern": "^handoff_[0-9a-f]{32}$" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "plan_refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/plan_ref" }
+    },
+    "run_refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/run_ref" }
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact_ref" }
+    },
+    "native_namespaces": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/native_namespaces" }
+    },
+    "native_authority_availability": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/native_authority_availability" }
+    },
+    "authority_effect": { "const": "none" }
+  },
+  "anyOf": [
+    { "properties": { "plan_refs": { "minItems": 1 } } },
+    { "properties": { "run_refs": { "minItems": 1 } } },
+    { "properties": { "artifact_refs": { "minItems": 1 } } }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "plan_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_id", "record_digest"],
+      "properties": {
+        "plan_id": { "type": "string", "pattern": "^plan_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "run_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "record_digest"],
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^run_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "record_digest"],
+      "properties": {
+        "artifact_id": { "type": "string", "pattern": "^artifact_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "native_namespaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "namespaces"],
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^run_[0-9a-f]{32}$" },
+        "namespaces": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+          }
+        }
+      }
+    },
+    "native_authority_availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "availability"],
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^run_[0-9a-f]{32}$" },
+        "availability": { "enum": ["reported", "not_reported"] }
+      }
+    }
+  }
+}

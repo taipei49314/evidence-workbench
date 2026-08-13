@@ -1,0 +1,16 @@
+{
+  "schema_version": "tool_manifest/v1", "manifest_id": "unasked", "display_name": "Unasked research case", "stability": "experimental", "enabled_by_default": false,
+  "adapter": { "id": "catalog-only-unasked", "version": "1" },
+  "identity_contract": { "executable_candidates": ["unasked"], "version_probe": { "arguments": ["--version"] }, "binary_digest_required": true, "python_distribution": "unasked", "supporting_tree_digest_required": true },
+  "subject_kind": "git",
+  "invocation_contract": { "mode": "direct_exec", "operation": "catalog_only", "parameters": [], "required_capabilities": ["execute_research_case"], "target_code_execution": "workflow_dependent", "network": "provider_dependent", "filesystem_write": "workspace" },
+  "artifact_contracts": [], "native_observation_contracts": [],
+  "exit_code_contract": { "entries": [], "unknown_code_policy": "preserve_unrecognized" },
+  "authority_contract": { "mode": "not_reported" },
+  "limitations": [
+    { "code": "adapter_not_implemented", "statement": "Catalog entry only; execution is disabled in this MVP." },
+    { "code": "runtime_capsule_missing", "statement": "The released wheel does not include the Python interpreter, transitive dependencies, or Git required for an immutable Windows execution closure." },
+    { "code": "non_certifying_research", "statement": "The released alpha remains non-certifying and has not demonstrated M0; no native result may be presented as production authority." },
+    { "code": "license_boundary", "statement": "Public visibility is not an open-source license; integration must remain process/artifact based." }
+  ]
+}

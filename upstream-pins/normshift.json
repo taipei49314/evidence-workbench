@@ -1,0 +1,10 @@
+{
+  "schema_version":"upstream_pin/v1","tool_manifest_id":"normshift","repository_url":"https://github.com/taipei49314/NormShift",
+  "source":{"default_branch":"master","commit_sha":"fb3c0656b8150e56604502450c46ff0e2ee027f1","tree_sha":"e9ed7ed05e505231a8ad2241ea6a6d83b15b6d27"},
+  "software_version":"0.3.2","release":null,
+  "evidence":[{"kind":"actions_artifact","id":"9177133515","name":"m0-ci-windows-latest-fb3c0656b8150e56604502450c46ff0e2ee027f1","subject_commit_sha":"fb3c0656b8150e56604502450c46ff0e2ee027f1","sha256":"66aea26b5c90ae51c480f5d358cec6dda79ffbe1e43f78b0e24678ea549c0e2d","size_bytes":977831,"status":"success","expires_at":"2026-11-11T10:14:21Z"}],
+  "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.12","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":[]},
+  "native_posture":{"status":"CURRENT_SOURCE_VERIFIED_RELEASE_BLOCKED","release_eligible":false},
+  "execution_readiness":{"state":"fail_closed","scope":"semantic_standards_diff","blocker_codes":["adapter_not_implemented","compiled_dependencies_not_included","multi_file_input_contract_not_implemented","python_interpreter_not_included"]},
+  "admission":{"evidence_integrity_state":"source_verified","authority_effect":"none"},"license_spdx":"Apache-2.0"
+}

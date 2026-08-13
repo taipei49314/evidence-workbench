@@ -1,0 +1,67 @@
+{
+  "schema_version": "runtime-capsule/v1",
+  "capsule_id": "capsule_00000000000000000000000000000000",
+  "platform": {
+    "os": "windows",
+    "arch": "x86_64",
+    "abi": "cp313-win_amd64"
+  },
+  "launcher": {
+    "kind": "interpreter",
+    "path": "runtime/python.exe",
+    "byte_length": 1,
+    "digest": {
+      "algorithm": "sha256",
+      "value": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "supporting_files": [
+    {
+      "path": "runtime/python313.dll",
+      "role": "interpreter_runtime",
+      "byte_length": 1,
+      "digest": {
+        "algorithm": "sha256",
+        "value": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    }
+  ],
+  "transitive_closure": {
+    "state": "complete",
+    "inventory_digest": {
+      "algorithm": "sha256",
+      "value": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "declared_file_count": 1,
+    "inventoried_file_count": 1,
+    "missing_paths": []
+  },
+  "external_platform_assumptions": [
+    {
+      "code": "windows_x64",
+      "statement": "Qualification was performed against the declared Windows x64 platform.",
+      "state": "verified_by_qualification"
+    }
+  ],
+  "operation_scope": {
+    "tool_manifest_id": "phaseledger",
+    "operations": ["verify"]
+  },
+  "qualification_evidence": [
+    {
+      "kind": "qualification_run",
+      "artifact_id": "artifact_22222222222222222222222222222222",
+      "digest": {
+        "algorithm": "sha256",
+        "value": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "observed_at": "2026-08-14T00:00:00Z",
+      "scope": "phaseledger verify on windows x86_64 cp313-win_amd64"
+    }
+  ],
+  "readiness": {
+    "state": "ready",
+    "blocker_codes": []
+  },
+  "authority_effect": "none"
+}

@@ -1,0 +1,25 @@
+[package]
+name = "ewb-test-harness"
+version = "0.2.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "ewb-test-harness"
+path = "src/main.rs"
+
+[lib]
+name = "ewb_test_harness"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tempfile = "3.20"
+uuid = { version = "1.18", features = ["serde", "v4"] }
+wait-timeout = "0.2"

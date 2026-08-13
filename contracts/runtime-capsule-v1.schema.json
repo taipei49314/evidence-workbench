@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench runtime capsule v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capsule_id",
+    "platform",
+    "launcher",
+    "supporting_files",
+    "transitive_closure",
+    "external_platform_assumptions",
+    "operation_scope",
+    "qualification_evidence",
+    "readiness",
+    "authority_effect"
+  ],
+  "properties": {
+    "schema_version": { "const": "runtime-capsule/v1" },
+    "capsule_id": { "type": "string", "pattern": "^capsule_[0-9a-f]{32}$" },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "abi"],
+      "properties": {
+        "os": { "$ref": "#/$defs/platform_component" },
+        "arch": { "$ref": "#/$defs/platform_component" },
+        "abi": { "$ref": "#/$defs/platform_component" }
+      }
+    },
+    "launcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "byte_length", "digest"],
+      "properties": {
+        "kind": { "enum": ["interpreter", "native_launcher"] },
+        "path": { "$ref": "#/$defs/capsule_path" },
+        "byte_length": { "type": "integer", "minimum": 1 },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "supporting_files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/supporting_file" }
+    },
+    "transitive_closure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "inventory_digest",
+        "declared_file_count",
+        "inventoried_file_count",
+        "missing_paths"
+      ],
+      "properties": {
+        "state": { "enum": ["complete", "incomplete"] },
+        "inventory_digest": { "$ref": "#/$defs/digest" },
+        "declared_file_count": { "type": "integer", "minimum": 0 },
+        "inventoried_file_count": { "type": "integer", "minimum": 0 },
+        "missing_paths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/capsule_path" }
+        }
+      }
+    },
+    "external_platform_assumptions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/platform_assumption" }
+    },
+    "operation_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_manifest_id", "operations"],
+      "properties": {
+        "tool_manifest_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+          }
+        }
+      }
+    },
+    "qualification_evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/qualification_evidence" }
+    },
+    "readiness": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "blocker_codes"],
+          "properties": {
+            "state": { "const": "ready" },
+            "blocker_codes": { "type": "array", "maxItems": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "blocker_codes"],
+          "properties": {
+            "state": { "const": "fail_closed" },
+            "blocker_codes": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "authority_effect": { "const": "none" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "readiness": {
+            "properties": { "state": { "const": "ready" } },
+            "required": ["state"]
+          }
+        },
+        "required": ["readiness"]
+      },
+      "then": {
+        "properties": {
+          "transitive_closure": {
+            "properties": {
+              "state": { "const": "complete" },
+              "missing_paths": { "maxItems": 0 }
+            },
+            "required": ["state", "missing_paths"]
+          },
+          "qualification_evidence": { "minItems": 1 },
+          "external_platform_assumptions": {
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "statement", "state"],
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+                },
+                "statement": { "type": "string", "minLength": 1 },
+                "state": { "enum": ["verified_by_qualification", "required_preflight"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "platform_component": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9_.-]{0,62}[a-z0-9])?$"
+    },
+    "capsule_path": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[:\\\\])[^/]+(?:/[^/]+)*$"
+    },
+    "supporting_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "role", "byte_length", "digest"],
+      "properties": {
+        "path": { "$ref": "#/$defs/capsule_path" },
+        "role": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+        },
+        "byte_length": { "type": "integer", "minimum": 0 },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "platform_assumption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "statement", "state"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+        },
+        "statement": { "type": "string", "minLength": 1 },
+        "state": {
+          "enum": ["verified_by_qualification", "required_preflight", "unresolved"]
+        }
+      }
+    },
+    "qualification_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "artifact_id", "digest", "observed_at", "scope"],
+      "properties": {
+        "kind": { "enum": ["qualification_run", "platform_probe", "preflight_record"] },
+        "artifact_id": { "type": "string", "pattern": "^artifact_[0-9a-f]{32}$" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "observed_at": { "type": "string", "format": "date-time" },
+        "scope": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

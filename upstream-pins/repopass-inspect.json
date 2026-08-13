@@ -1,0 +1,10 @@
+{
+  "schema_version":"upstream_pin/v1","tool_manifest_id":"repopass-inspect","repository_url":"https://github.com/taipei49314/RepoPassport",
+  "source":{"default_branch":"main","commit_sha":"f00e158cf53fbd600f3b5c849499d3b802a15433","tree_sha":"bfb54f0ac74a3158e5425e22cff251b139cc2deb"},
+  "software_version":"0.1.0-alpha.33","release":null,
+  "evidence":[{"kind":"actions_artifact","id":"9174076860","name":"source-qualification-attempt-windows-amd64-f00e158cf53fbd600f3b5c849499d3b802a15433-1","subject_commit_sha":"f00e158cf53fbd600f3b5c849499d3b802a15433","sha256":"16f289c68e6f72c27e5b0f69cee718fcb186a82400a6540bf0ff1900e7eb4723","size_bytes":808,"status":"blocked","expires_at":"2026-11-11T08:33:17Z"}],
+  "runtime":{"kind":"native","target_os":"windows","target_arch":"x86_64","version_constraint":"0.1.0-alpha.33","interpreter_included":true,"transitive_dependencies_included":false,"self_contained":false,"external_tools":["git"]},
+  "native_posture":{"status":"SOURCE_QUALIFICATION_BLOCKED","release_eligible":false},
+  "execution_readiness":{"state":"fail_closed","scope":"local_inspect","blocker_codes":["ambient_git_not_bound","source_qualification_blocked","windows_executable_not_published"]},
+  "admission":{"evidence_integrity_state":"upstream_reported","authority_effect":"none"},"license_spdx":"Apache-2.0"
+}

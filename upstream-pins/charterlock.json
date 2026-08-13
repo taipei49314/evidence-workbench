@@ -1,0 +1,48 @@
+{
+  "schema_version": "upstream_pin/v1",
+  "tool_manifest_id": "charterlock",
+  "repository_url": "https://github.com/taipei49314/charterlock",
+  "source": {
+    "default_branch": "main",
+    "commit_sha": "0e0c9188474ea977d550ffc50a8095e1203d63c7",
+    "tree_sha": "ecfed649b5da34ee01764134975f9a02262a9076"
+  },
+  "software_version": "0.1.0",
+  "release": null,
+  "evidence": [
+    {
+      "kind": "workflow_run",
+      "id": "31724051397",
+      "name": "ci",
+      "subject_commit_sha": "0e0c9188474ea977d550ffc50a8095e1203d63c7",
+      "sha256": null,
+      "size_bytes": null,
+      "status": "success",
+      "expires_at": null
+    }
+  ],
+  "runtime": {
+    "kind": "python",
+    "target_os": "any",
+    "target_arch": "any",
+    "version_constraint": ">=3.11",
+    "interpreter_included": false,
+    "transitive_dependencies_included": false,
+    "self_contained": false,
+    "external_tools": []
+  },
+  "native_posture": { "status": "ALPHA_SOURCE_VERIFIED", "release_eligible": null },
+  "execution_readiness": {
+    "state": "fail_closed",
+    "scope": "exam_admission",
+    "blocker_codes": [
+      "adapter_not_implemented",
+      "multi_artifact_subject_not_implemented",
+      "operation_capabilities_not_separated",
+      "python_interpreter_not_included",
+      "python_runtime_snapshot_unimplemented"
+    ]
+  },
+  "admission": { "evidence_integrity_state": "source_verified", "authority_effect": "none" },
+  "license_spdx": "Apache-2.0"
+}

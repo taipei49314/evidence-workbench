@@ -1,0 +1,14 @@
+{
+  "schema_version":"upstream_pin/v1","tool_manifest_id":"unasked","repository_url":"https://github.com/taipei49314/unasked",
+  "source":{"default_branch":"main","commit_sha":"ccb7e3093718e33e68038907716f22a3f67b7e15","tree_sha":"d27a0b10b3039896366016a3dad9007fab8d0861"},
+  "software_version":"0.4.0",
+  "release":{"channel":"github_release","version":"0.4.0","tag":"v0.4.0","release_id":"369839342","subject_commit_sha":"ccb7e3093718e33e68038907716f22a3f67b7e15","subject_tree_sha":"d27a0b10b3039896366016a3dad9007fab8d0861"},
+  "evidence":[
+    {"kind":"release_asset","id":"512856999","name":"unasked_research-0.4.0-py3-none-any.whl","subject_commit_sha":"ccb7e3093718e33e68038907716f22a3f67b7e15","sha256":"03848ee53ed67edc81fddd90f60f4f94f02909f89a67c051d7f575dc3f9b44d7","size_bytes":232407,"status":"published","expires_at":null},
+    {"kind":"release_asset","id":"512856997","name":"SHA256SUMS.txt","subject_commit_sha":"ccb7e3093718e33e68038907716f22a3f67b7e15","sha256":"a884e4f71be434150cd42cfa8f8dec154ff4d571591157bff49745983d72b448","size_bytes":202,"status":"published","expires_at":null}
+  ],
+  "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.11,<3.15","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":["git"]},
+  "native_posture":{"status":"RELEASED_ALPHA_NON_CERTIFYING","release_eligible":null},
+  "execution_readiness":{"state":"fail_closed","scope":"research_case","blocker_codes":["adapter_not_implemented","ambient_git_not_bound","dependency_closure_not_included","license_forbids_redistributed_capsule","python_interpreter_not_included"]},
+  "admission":{"evidence_integrity_state":"published_checksums_verified","authority_effect":"none"},"license_spdx":"LicenseRef-Proprietary"
+}

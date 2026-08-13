@@ -1,0 +1,36 @@
+{
+  "schema_version": "tool_manifest/v1",
+  "manifest_id": "walkaround",
+  "display_name": "walkaround session admission",
+  "stability": "experimental",
+  "enabled_by_default": false,
+  "adapter": { "id": "catalog-only-walkaround", "version": "1" },
+  "identity_contract": {
+    "executable_candidates": ["walkaround"],
+    "version_probe": { "arguments": ["version"] },
+    "binary_digest_required": true,
+    "python_distribution": "walkaround",
+    "supporting_tree_digest_required": true
+  },
+  "subject_kind": "artifact",
+  "invocation_contract": {
+    "mode": "direct_exec",
+    "operation": "catalog_only",
+    "parameters": [],
+    "required_capabilities": ["manage_session_admission"],
+    "target_code_execution": "organ_adapter_dependent",
+    "network": "organ_adapter_dependent",
+    "filesystem_write": "session_workspace"
+  },
+  "artifact_contracts": [],
+  "native_observation_contracts": [],
+  "exit_code_contract": { "entries": [], "unknown_code_policy": "preserve_unrecognized" },
+  "authority_contract": { "mode": "not_reported" },
+  "limitations": [
+    { "code": "adapter_not_implemented", "statement": "Catalog entry only; execution is disabled in this MVP." },
+    { "code": "python_runtime_closure_missing", "statement": "No admitted capsule binds exact CPython, its standard library, and the pinned walkaround distribution." },
+    { "code": "mutable_session_subject_missing", "statement": "walkaround operates a mutable work-tree session and .walkaround directory; EWB's current single-artifact subject cannot represent that lifecycle." },
+    { "code": "operations_require_separation", "statement": "Session mutation, receipt inspection, optional Git discovery, and organ execution require distinct future adapters and capabilities." },
+    { "code": "admission_is_not_verification", "statement": "An unsigned ADMITTED receipt records passage through a frozen session contract; it does not verify correctness, security, producer identity, or authority." }
+  ]
+}

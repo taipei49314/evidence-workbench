@@ -1,0 +1,57 @@
+{
+  "schema_version": "candidate_pin/v1",
+  "tool_manifest_id": "stateweaver-foundation",
+  "repository_url": "https://github.com/taipei49314/stateweaver",
+  "source": {
+    "commit_sha": "598753d182dda65c73a313e9efbf20b826942f0a",
+    "tree_sha": "e8f89a72235ab0db33149bcfdc616f825ebe68ad"
+  },
+  "candidate": {
+    "payload_manifest_sha256": "8c7c77d59d4cf3abdcadcce3f2d110ca085789da1ec14a2301245f3418b78bc3",
+    "receipt_sha256": "9f0518cb8bf9d6774dbb5dd6c60bf32ad57fe9f9b77ea1b5b8bfc6376dbb92e0",
+    "actions_artifact_id": "9185829493",
+    "actions_artifact_name": "stateweaver-candidate-8c7c77d59d4cf3abdcadcce3f2d110ca085789da1ec14a2301245f3418b78bc3",
+    "actions_artifact_sha256": "5d02880586dcf9075043ca4a08212eef4be1d6c3b3dc2c5d6c87744746f6d1f0",
+    "workflow_run_id": "31711437241",
+    "workflow_run_url": "https://github.com/taipei49314/stateweaver/actions/runs/31711437241",
+    "expires_at": "2026-11-11T14:42:48Z"
+  },
+  "runtime_target": {
+    "os": "linux",
+    "arch": "x86_64",
+    "implementation": "cpython",
+    "python_version": "3.13.15",
+    "python_abi": "cp313",
+    "interpreter_included": false
+  },
+  "inventory": {
+    "workspace_wheels": 18,
+    "vendored_runtime_wheels": 15,
+    "manifest_artifacts": 111,
+    "checksum_entries": 113
+  },
+  "native_posture": {
+    "status": "CANDIDATE_READY_FOR_EXTERNAL_QUALIFICATION",
+    "release_eligible": false
+  },
+  "provenance": {
+    "attestation_actions_artifact_id": "9185838564",
+    "attestation_actions_artifact_sha256": "45bd8557282362bb347390e875ec334d218ec39756c8dde1c754464317e386ba",
+    "attestation_bundle_sha256": "8f713f4db8d380654bcb79aa54c3f1a8920d5bf2745d5f962a43bcdc13436e96",
+    "download_verification_actions_artifact_id": "9185858207",
+    "download_verification_actions_artifact_sha256": "8dd6308a6a5a1ce73ad989e2ad5f64a38689ccb7839a6b6ad140dfe2a525330b",
+    "download_verification_receipt_sha256": "6be1011e494c0e26bbd75d23cbdaaee37921db6f30648eb84464a16b14567adf",
+    "signer_workflow": "github.com/taipei49314/stateweaver/.github/workflows/candidate.yml",
+    "signer_digest": "598753d182dda65c73a313e9efbf20b826942f0a",
+    "deny_self_hosted_runners": true
+  },
+  "workbench_admission": {
+    "implementation_state": "candidate_complete",
+    "evidence_integrity_state": "verified_at_admission",
+    "checksum_entries_verified": 113,
+    "attestation_verified": true,
+    "attestation_subject_sha256": "8c7c77d59d4cf3abdcadcce3f2d110ca085789da1ec14a2301245f3418b78bc3",
+    "verified_at": "2026-08-13T16:37:06Z",
+    "authority_effect": "none"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": "tool_manifest/v1", "manifest_id": "smallestlie", "display_name": "SmallestLie authorized falsification", "stability": "experimental", "enabled_by_default": false,
+  "adapter": { "id": "catalog-only-smallestlie", "version": "1" },
+  "identity_contract": { "executable_candidates": ["smallestlie"], "version_probe": { "arguments": ["--version"] }, "binary_digest_required": true, "python_distribution": "smallestlie", "supporting_tree_digest_required": true },
+  "subject_kind": "git",
+  "invocation_contract": { "mode": "direct_exec", "operation": "catalog_only", "parameters": [], "required_capabilities": ["authorized_adversarial_mutation", "execute_target"], "target_code_execution": "authorized_disposable_copy", "network": "denied", "filesystem_write": "disposable_copy_and_evidence" },
+  "artifact_contracts": [], "native_observation_contracts": [],
+  "exit_code_contract": { "entries": [], "unknown_code_policy": "preserve_unrecognized" },
+  "authority_contract": { "mode": "not_reported" },
+  "limitations": [
+    { "code": "adapter_not_implemented", "statement": "Catalog entry only; execution is disabled in this MVP." },
+    { "code": "os_containment_missing", "statement": "Campaigns mutate disposable workspaces and execute target subprocesses; environment-variable network denial is not Windows OS egress or process-tree containment." },
+    { "code": "runtime_lock_version_drift", "statement": "The upstream lock metadata identifies project version 0.7.0 while the exact source identifies 0.7.1; it is not an admissible runtime closure." },
+    { "code": "authorization_required", "statement": "A future adapter must require explicit authorization and a disposable target." }
+  ]
+}

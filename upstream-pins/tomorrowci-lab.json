@@ -1,0 +1,14 @@
+{
+  "schema_version":"upstream_pin/v1","tool_manifest_id":"tomorrowci-lab","repository_url":"https://github.com/taipei49314/tomorrowci-lab",
+  "source":{"default_branch":"master","commit_sha":"62107bc4cdf74eb920e18c549b87ebc59ca3f719","tree_sha":"25f650c10e0a08854ffad359494f45c80b8f6d76"},
+  "software_version":"0.2.0-alpha.1",
+  "release":{"channel":"candidate_release","version":"0.2.0-alpha.1","tag":"v0.2.0-alpha.1","release_id":"369814204","subject_commit_sha":"f83d43235c4d03ea9a95fc048d3edbd582e8f438","subject_tree_sha":"15c1b44e3efe808100c8707ed7ab33731c702427"},
+  "evidence":[
+    {"kind":"release_asset","id":"512812041","name":"tomorrowci-v0.2.0-alpha.1-x86_64-pc-windows-msvc.zip","subject_commit_sha":"f83d43235c4d03ea9a95fc048d3edbd582e8f438","sha256":"6723c9c58bf7293f3c69e27a9d1b195bc576711337e181d0faea3852940fd41e","size_bytes":1829127,"status":"published","expires_at":null},
+    {"kind":"native_executable","id":"tomorrowci.exe","name":"tomorrowci.exe","subject_commit_sha":"f83d43235c4d03ea9a95fc048d3edbd582e8f438","sha256":"5a79d242d575c6eb37ed8790974cded4561e36266b5d006a783777b210a15f4f","size_bytes":5140480,"status":"verified_at_admission","expires_at":null}
+  ],
+  "runtime":{"kind":"native","target_os":"windows","target_arch":"x86_64","version_constraint":"0.2.0-alpha.1","interpreter_included":true,"transitive_dependencies_included":false,"self_contained":false,"external_tools":["docker","git","podman","vcruntime140.dll"]},
+  "native_posture":{"status":"CANDIDATE_ONLY_NOT_RELEASE_AUTHORIZED","release_eligible":false},
+  "execution_readiness":{"state":"fail_closed","scope":"bounded_trust_audit_only_with_external_tool_probes_isolated_to_blocked","blocker_codes":["unbound_vcruntime140_dll"]},
+  "admission":{"evidence_integrity_state":"verified_at_admission","authority_effect":"none"},"license_spdx":"Apache-2.0"
+}

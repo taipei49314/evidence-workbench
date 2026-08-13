@@ -1,0 +1,91 @@
+{
+  "schema_version": "instrument_run/v1",
+  "run_id": "run_00000000000000000000000000000000",
+  "tool_ref": {
+    "manifest_id": "repopass-inspect",
+    "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "resolved_tool_identity": {
+    "path": "C:/evidence-workspace/.ewb/staged/native-1111111111111111111111111111111111111111111111111111111111111111.exe",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "size_bytes": 1,
+    "supporting_files_sha256": null,
+    "supporting_file_count": 0,
+    "reported_version": null,
+    "source_path": "C:/original/repopass.exe",
+    "snapshot_artifact_id": "artifact_00000000000000000000000000000000"
+  },
+  "recorder_identity": {
+    "version": "0.2.0",
+    "executable_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "adapter": {
+    "id": "repopass-local-inspect",
+    "version": "1",
+    "implementation_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "subject": {
+    "kind": "git",
+    "repository": "https://example.invalid/repo.git",
+    "original_root": "C:/original/repo",
+    "revisions": [{"role":"subject","algorithm":"git-sha1","value":"4444444444444444444444444444444444444444"}],
+    "worktree_state": "clean",
+    "snapshot": {
+      "artifact_id": "artifact_11111111111111111111111111111111",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "byte_length": 1,
+      "execution_path": "C:/evidence-workspace/.ewb/executions/plan_00000000000000000000000000000000",
+      "tree_artifact_id": "artifact_22222222222222222222222222222222",
+      "tree_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "tree_byte_length": 1,
+      "tree_file_count": 1,
+      "git_plan_tool": {
+        "source_path": "C:/Program Files/Git/cmd/git.exe",
+        "source_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "source_size_bytes": 1,
+        "snapshot_artifact_id": "artifact_33333333333333333333333333333333",
+        "staged_path": "C:/evidence-workspace/.ewb/staged/git-plan-7777777777777777777777777777777777777777777777777777777777777777.exe",
+        "use_scope": "plan_only_locked_source",
+        "runtime_closure": "host_installation_not_snapshotted_never_used_at_execute"
+      }
+    }
+  },
+  "parameters": {},
+  "invocation": {
+    "mode": "direct_exec",
+    "argv": ["C:/evidence-workspace/.ewb/staged/native-1111111111111111111111111111111111111111111111111111111111111111.exe", "--output", "json", "--offline", "--non-interactive", "inspect", "C:/evidence-workspace/.ewb/executions/plan_00000000000000000000000000000000"],
+    "cwd": "C:/evidence-workspace/.ewb/executions/plan_00000000000000000000000000000000",
+    "timeout_ms": 300000,
+    "required_capabilities": ["read_subject"]
+  },
+  "started_at": "2026-08-13T00:00:00.000Z",
+  "finished_at": "2026-08-13T00:00:00.001Z",
+  "termination": {
+    "kind": "spawn_error",
+    "error_code": "fixture",
+    "message": "schema example"
+  },
+  "artifacts": [],
+  "native_result": {
+    "availability": "not_reported",
+    "reason": "process_not_exited",
+    "observations": []
+  },
+  "native_authority": {
+    "availability": "not_reported",
+    "reason": "native_authority_not_configured",
+    "claims": []
+  },
+  "limitations": {
+    "availability": "reported",
+    "items": [
+      {
+        "namespace": "evidence_workbench",
+        "code": "schema_example",
+        "statement": "This is a non-authoritative schema fixture.",
+        "origin": "adapter",
+        "source": "fixture"
+      }
+    ]
+  }
+}
