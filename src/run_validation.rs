@@ -29,9 +29,9 @@ pub fn validate(workspace: &Workspace, run: &InstrumentRun) -> Result<()> {
             "instrument run uses a Python adapter whose immutable runtime snapshot is not implemented"
         );
     }
-    require_windows_execution_boundary(
-        "native instrument runs are unsupported until descriptor-based exec is implemented",
-    )?;
+    // Persisted run records are portable evidence.  Linux must be able to
+    // re-derive their exact native projections and reject forged authority
+    // even though creating/executing native plans remains Windows-only.
     if run.adapter.id != manifest.adapter.id || run.adapter.version != manifest.adapter.version {
         bail!("run adapter identity does not match its embedded manifest");
     }
