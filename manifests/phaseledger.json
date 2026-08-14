@@ -7,7 +7,7 @@
   "adapter": { "id": "phaseledger-strict-measure", "version": "1" },
   "identity_contract": {
     "executable_candidates": ["phaseledger"],
-    "version_probe": null,
+    "version_probe": { "arguments": ["--version"] },
     "binary_digest_required": true,
     "python_distribution": "phaseledger",
     "supporting_tree_digest_required": true
@@ -42,7 +42,7 @@
   "limitations": [
     { "code": "python_execution_containment_missing", "statement": "Exact-byte capsule admission is implemented, but EWB does not yet provide OS-enforced no-network and child-process containment for Python execution." },
     { "code": "caller_observation_gate", "statement": "phaseledger checks caller-supplied observations; it does not execute or independently verify those checks." },
-    { "code": "native_version_not_reported", "statement": "The current native CLI has no version command; the executable bytes are still pinned." },
+    { "code": "native_version_probe_available", "statement": "phaseledger --version prints the package version; EWB still pins executable bytes and does not treat the version string as authority." },
     { "code": "direct_process_not_os_sandbox", "statement": "Capability approval constrains this adapter invocation; it is not an operating-system sandbox." }
   ]
 }

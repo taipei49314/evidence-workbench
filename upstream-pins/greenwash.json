@@ -1,8 +1,8 @@
 {
   "schema_version":"upstream_pin/v1","tool_manifest_id":"greenwash","repository_url":"https://github.com/taipei49314/greenwash",
-  "source":{"default_branch":"main","commit_sha":"25db87559ed8e756d6a20acf09bba5654d9b053a","tree_sha":"453c91edec33304d5d1e9dace6feaf56032270b4"},
-  "software_version":"0.1.26","release":null,
-  "evidence":[{"kind":"workflow_run","id":"31678099621","name":"ci","subject_commit_sha":"25db87559ed8e756d6a20acf09bba5654d9b053a","sha256":null,"size_bytes":null,"status":"success","expires_at":null}],
+  "source":{"default_branch":"main","commit_sha":"b217263cc77d4fc8922d44b85423cb4dc2499711","tree_sha":"2e94a3b7f44ef03bbb5c4864447cb3d005aff4da"},
+  "software_version":"0.1.34","release":null,
+  "evidence":[{"kind":"workflow_run","id":"31829188509","name":"ci","subject_commit_sha":"b217263cc77d4fc8922d44b85423cb4dc2499711","sha256":null,"size_bytes":null,"status":"success","expires_at":null}],
   "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.11","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":["git"]},
   "native_posture":{"status":"SOURCE_VERIFIED","release_eligible":null},
   "execution_readiness":{"state":"fail_closed","scope":"exact_range_check","blocker_codes":["ambient_git_not_bound","git_metadata_not_materialized","python_interpreter_not_included","python_stdlib_not_included"]},
