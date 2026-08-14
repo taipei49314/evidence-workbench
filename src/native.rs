@@ -767,7 +767,7 @@ pub fn execute(
     limitation_items.push(LimitationItem {
         namespace: "evidence_workbench".to_owned(),
         code: "child_process_tree_not_contained".to_owned(),
-        statement: "Timeout termination targets the direct child; this MVP does not claim operating-system process-tree containment.".to_owned(),
+        statement: "On Windows, timeout closes a Job Object with KILL_ON_JOB_CLOSE after the direct child is killed. The child is assigned after spawn, so a grandchild can race that assignment. This is not OS network containment.".to_owned(),
         origin: "adapter".to_owned(),
         source: format!("recorder:sha256:{}", recorder.executable_sha256),
     });
@@ -1069,6 +1069,66 @@ fn extract_text_prefix(bytes: &[u8], prefix: &str) -> Result<(Value, Locator)> {
     bail!("native text prefix not found")
 }
 
+#[cfg(windows)]
+struct ProcessJob {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(windows)]
+impl ProcessJob {
+    fn create_and_assign(pid: u32) -> Result<Self> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+        };
+
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                bail!("cannot create Windows Job Object");
+            }
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&info).cast(),
+                u32::try_from(std::mem::size_of_val(&info))?,
+            ) == 0
+            {
+                let _ = CloseHandle(job);
+                bail!("cannot configure Windows Job Object KILL_ON_JOB_CLOSE");
+            }
+            let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+            if process.is_null() {
+                let _ = CloseHandle(job);
+                bail!("cannot open child process for Job Object assignment");
+            }
+            let assigned = AssignProcessToJobObject(job, process);
+            let _ = CloseHandle(process);
+            if assigned == 0 {
+                let _ = CloseHandle(job);
+                bail!("cannot assign child process to Windows Job Object");
+            }
+            Ok(Self { handle: job })
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessJob {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = windows_sys::Win32::Foundation::CloseHandle(self.handle);
+        }
+    }
+}
+
 fn run_direct(
     workspace: &Workspace,
     operation: &str,
@@ -1139,6 +1199,26 @@ fn run_direct(
                         .raw_os_error()
                         .map(|code| code.to_string())
                         .unwrap_or_else(|| error.kind().to_string()),
+                    message: error.to_string(),
+                },
+                stdout_path: None,
+                stderr_path: None,
+            });
+        }
+    };
+    #[cfg(windows)]
+    let _job = match ProcessJob::create_and_assign(child.id()) {
+        Ok(job) => job,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = fs::remove_file(&stdout_path);
+            let _ = fs::remove_file(&stderr_path);
+            return Ok(DirectResult {
+                started_at,
+                finished_at: now(),
+                termination: Termination::SpawnError {
+                    error_code: "job_object".to_owned(),
                     message: error.to_string(),
                 },
                 stdout_path: None,
@@ -1711,5 +1791,21 @@ mod tests {
         if let Some(marker) = std::env::var_os("EWB_ADVERSARIAL_SHIM_MARKER") {
             fs::write(marker, b"launched").unwrap();
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn assigns_spawned_child_to_job_object() {
+        let mut child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let job = super::ProcessJob::create_and_assign(child.id());
+        let status = child.wait().unwrap();
+        assert!(job.is_ok(), "{}", job.err().unwrap());
+        assert!(status.success());
     }
 }
