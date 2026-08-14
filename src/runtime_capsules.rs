@@ -1,11 +1,15 @@
 use crate::contracts::{
-    ArtifactDescriptor, CapsuleReadinessState, RuntimeCapsule, RuntimeCapsuleFileSnapshot,
-    RuntimeCapsuleRecord, RuntimeCapsuleRecordPayload,
+    ArtifactDescriptor, CapsuleClosureState, CapsuleLauncher, CapsuleLauncherKind,
+    CapsuleOperationScope, CapsulePlatform, CapsuleReadiness, CapsuleReadinessState,
+    CapsuleSupportingFile, CapsuleTransitiveClosure, ContractAuthorityEffect, Digest,
+    ExternalPlatformAssumption, PlatformAssumptionState, RuntimeCapsule,
+    RuntimeCapsuleFileSnapshot, RuntimeCapsuleRecord, RuntimeCapsuleRecordPayload,
 };
 use crate::data_contract_validation;
 use crate::workspace::{self, Workspace};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -193,6 +197,183 @@ pub fn planning_blocker(
         "{tool_manifest_id} planning remains fail_closed: python_capsule_execution_containment_unimplemented; capsule {capsule_id} record {} is exact-byte verified, but EWB does not yet provide OS-enforced no-network and child-process containment for Python execution",
         record.record_digest
     )
+}
+
+/// Inventory a closed root into a `runtime-capsule/v1` descriptor.
+///
+/// This is a snapshot producer, not admission and not readiness. The
+/// descriptor is always `fail_closed`: a complete file list does not
+/// authorize planning or execution.
+pub fn snapshot_descriptor(
+    root: &Path,
+    launcher: Option<&str>,
+    tool_manifest_id: &str,
+    operation: &str,
+    abi: &str,
+) -> Result<RuntimeCapsule> {
+    let root = canonical_real_directory(root, "runtime capsule root")?;
+    let files = collect_regular_files(&root)?;
+    if files.is_empty() {
+        bail!("runtime capsule root contains no regular files");
+    }
+
+    let launcher_path = resolve_launcher_path(&files, launcher)?;
+    let launcher_source = files
+        .get(&launcher_path)
+        .expect("launcher path exists after resolution");
+    let (launcher_digest, launcher_length) = workspace::digest_file(launcher_source)?;
+    if launcher_length == 0 {
+        bail!("capsule launcher must contain bytes");
+    }
+
+    let mut supporting_files = Vec::new();
+    for (path, source) in &files {
+        if path == &launcher_path {
+            continue;
+        }
+        let (digest, byte_length) = workspace::digest_file(source)?;
+        supporting_files.push(CapsuleSupportingFile {
+            path: path.clone(),
+            role: supporting_role(path),
+            byte_length,
+            digest: Digest {
+                algorithm: "sha256".to_owned(),
+                value: digest,
+            },
+        });
+    }
+
+    let has_stdlib = files.keys().any(|path| is_stdlib_marker(path));
+    let has_first_party = files.keys().any(|path| path.to_ascii_lowercase().contains("phaseledger"))
+        || tool_manifest_id != "phaseledger";
+
+    let mut missing_paths = Vec::new();
+    let mut blocker_codes = vec![
+        "python_capsule_execution_containment_unimplemented".to_owned(),
+        "qualification_missing".to_owned(),
+        "external_platform_assumption_unresolved".to_owned(),
+    ];
+    if !has_stdlib {
+        missing_paths.push("Lib/encodings/__init__.py".to_owned());
+        blocker_codes.push("python_stdlib_not_included".to_owned());
+        blocker_codes.push("runtime_closure_incomplete".to_owned());
+    }
+    if !has_first_party {
+        blocker_codes.push("python_first_party_package_missing".to_owned());
+    }
+    blocker_codes.sort();
+    blocker_codes.dedup();
+
+    let inventoried_file_count = u64::try_from(supporting_files.len())
+        .context("supporting-file inventory is too large")?;
+    let declared_file_count = inventoried_file_count + u64::try_from(missing_paths.len())?;
+    let inventory_digest = workspace::digest_serialized(&supporting_files)?;
+    let (closure_state, missing_paths) = if missing_paths.is_empty() {
+        (CapsuleClosureState::Complete, Vec::new())
+    } else {
+        (CapsuleClosureState::Incomplete, missing_paths)
+    };
+
+    let mut identity = Sha256::new();
+    for part in [
+        "runtime-capsule-snapshot/v1",
+        tool_manifest_id,
+        operation,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        abi,
+        &launcher_path,
+        &launcher_digest,
+        &inventory_digest,
+    ] {
+        identity.update(part.as_bytes());
+        identity.update([0]);
+    }
+    let capsule_id = format!("capsule_{}", hex::encode(&identity.finalize()[..16]));
+
+    let capsule = RuntimeCapsule {
+        schema_version: "runtime-capsule/v1".to_owned(),
+        capsule_id,
+        platform: CapsulePlatform {
+            os: std::env::consts::OS.to_owned(),
+            arch: std::env::consts::ARCH.to_owned(),
+            abi: abi.to_owned(),
+        },
+        launcher: CapsuleLauncher {
+            kind: CapsuleLauncherKind::Interpreter,
+            path: launcher_path,
+            byte_length: launcher_length,
+            digest: Digest {
+                algorithm: "sha256".to_owned(),
+                value: launcher_digest,
+            },
+        },
+        supporting_files,
+        transitive_closure: CapsuleTransitiveClosure {
+            state: closure_state,
+            inventory_digest: Digest {
+                algorithm: "sha256".to_owned(),
+                value: inventory_digest,
+            },
+            declared_file_count,
+            inventoried_file_count,
+            missing_paths,
+        },
+        external_platform_assumptions: vec![ExternalPlatformAssumption {
+            code: "host_interpreter_copy".to_owned(),
+            statement: "Files were copied from a host interpreter or a local tree. This is not a qualified embeddable distribution.".to_owned(),
+            state: PlatformAssumptionState::Unresolved,
+        }],
+        operation_scope: CapsuleOperationScope {
+            tool_manifest_id: tool_manifest_id.to_owned(),
+            operations: vec![operation.to_owned()],
+        },
+        qualification_evidence: Vec::new(),
+        readiness: CapsuleReadiness {
+            state: CapsuleReadinessState::FailClosed,
+            blocker_codes,
+        },
+        authority_effect: ContractAuthorityEffect::None,
+    };
+    data_contract_validation::validate_runtime_capsule(&capsule)?;
+    Ok(capsule)
+}
+
+fn resolve_launcher_path(
+    files: &BTreeMap<String, PathBuf>,
+    requested: Option<&str>,
+) -> Result<String> {
+    if let Some(requested) = requested {
+        if !files.contains_key(requested) {
+            bail!("requested launcher {requested} is not in the runtime root");
+        }
+        return Ok(requested.to_owned());
+    }
+    for candidate in ["python.exe", "python"] {
+        if files.contains_key(candidate) {
+            return Ok(candidate.to_owned());
+        }
+    }
+    bail!("runtime root has no python.exe or python launcher; pass --launcher");
+}
+
+fn supporting_role(path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    if lower.contains("phaseledger") {
+        "first_party_package".to_owned()
+    } else if lower.ends_with(".dll") || lower.ends_with(".pyd") || lower.ends_with(".zip") {
+        "interpreter_runtime".to_owned()
+    } else if lower.starts_with("lib/") || lower.starts_with("dlls/") {
+        "interpreter_stdlib".to_owned()
+    } else {
+        "supporting_file".to_owned()
+    }
+}
+
+fn is_stdlib_marker(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower == "lib/encodings/__init__.py"
+        || (lower.starts_with("python") && lower.ends_with(".zip") && !lower.contains('/'))
 }
 
 fn verify_record(workspace: &Workspace, record: &RuntimeCapsuleRecord) -> Result<()> {
@@ -695,5 +876,86 @@ mod tests {
                 .next()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn snapshot_is_fail_closed_and_admits_without_planning() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir(&workspace_root).unwrap();
+        let workspace = Workspace::init(&workspace_root).unwrap();
+        let root = temp.path().join("runtime");
+        fs::create_dir_all(root.join("Lib")).unwrap();
+        fs::write(root.join("python.exe"), b"launcher").unwrap();
+        fs::write(root.join("Lib/phaseledger.py"), b"module").unwrap();
+
+        let capsule = snapshot_descriptor(
+            &root,
+            None,
+            "phaseledger",
+            "phaseledger_measure",
+            "host-cpython",
+        )
+        .unwrap();
+
+        assert_eq!(capsule.readiness.state, CapsuleReadinessState::FailClosed);
+        assert!(
+            capsule
+                .readiness
+                .blocker_codes
+                .iter()
+                .any(|code| code == "python_capsule_execution_containment_unimplemented")
+        );
+        assert!(
+            capsule
+                .readiness
+                .blocker_codes
+                .iter()
+                .any(|code| code == "python_stdlib_not_included")
+        );
+        assert_eq!(capsule.authority_effect, ContractAuthorityEffect::None);
+        assert_eq!(capsule.transitive_closure.state, CapsuleClosureState::Incomplete);
+
+        let descriptor = temp.path().join("runtime-capsule.json");
+        fs::write(&descriptor, serde_json::to_vec_pretty(&capsule).unwrap()).unwrap();
+        let record = admit(&workspace, &descriptor, &root).unwrap();
+        let error = planning_blocker(
+            &workspace,
+            Some(&record.capsule_id),
+            "phaseledger",
+            "phaseledger_measure",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("runtime_capsule_not_ready")
+                || format!("{error:#}").contains("python_capsule_execution_containment_unimplemented")
+        );
+    }
+
+    #[test]
+    fn snapshot_marks_stdlib_complete_when_encodings_is_present() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("runtime");
+        fs::create_dir_all(root.join("Lib/encodings")).unwrap();
+        fs::write(root.join("python.exe"), b"launcher").unwrap();
+        fs::write(root.join("Lib/encodings/__init__.py"), b"enc").unwrap();
+        fs::write(root.join("Lib/phaseledger.py"), b"module").unwrap();
+
+        let capsule = snapshot_descriptor(
+            &root,
+            None,
+            "phaseledger",
+            "phaseledger_measure",
+            "host-cpython",
+        )
+        .unwrap();
+
+        assert_eq!(capsule.transitive_closure.state, CapsuleClosureState::Complete);
+        assert!(!capsule
+            .readiness
+            .blocker_codes
+            .iter()
+            .any(|code| code == "python_stdlib_not_included"));
+        assert_eq!(capsule.readiness.state, CapsuleReadinessState::FailClosed);
     }
 }

@@ -619,6 +619,47 @@ fn capsule_cli_admits_lists_shows_and_verifies_while_phaseledger_stays_blocked()
 }
 
 #[test]
+fn capsules_snapshot_writes_fail_closed_descriptor_without_workspace() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("runtime");
+    fs::create_dir_all(root.join("Lib")).unwrap();
+    fs::write(root.join("python.exe"), b"launcher").unwrap();
+    fs::write(root.join("Lib/phaseledger.py"), b"module").unwrap();
+    let out = temp.path().join("runtime-capsule.json");
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .args(["--json", "capsules", "snapshot", "--root"])
+            .arg(&root)
+            .arg("--out")
+            .arg(&out)
+            .args([
+                "--tool",
+                "phaseledger",
+                "--operation",
+                "phaseledger_measure",
+            ]),
+    );
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["command"], "capsules.snapshot");
+    assert_eq!(value["data"]["readiness"]["state"], "fail_closed");
+    assert!(
+        value["data"]["readiness"]["blocker_codes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|code| code == "python_capsule_execution_containment_unimplemented")
+    );
+    assert_eq!(value["data"]["authority_effect"], "none");
+    assert!(out.is_file());
+    assert!(!temp.path().join(".ewb").exists());
+
+    let parsed: RuntimeCapsule =
+        serde_json::from_slice(&fs::read(&out).unwrap()).expect("snapshot descriptor parses");
+    assert_eq!(parsed.readiness.state, evidence_workbench::contracts::CapsuleReadinessState::FailClosed);
+}
+
+#[test]
 fn phaseledger_without_capsule_fails_before_importing_subject_or_plan() {
     let temp = TempDir::new().unwrap();
     init(temp.path());

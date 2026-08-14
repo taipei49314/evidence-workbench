@@ -1,4 +1,5 @@
 /target/
 /tests/harness/target/
 /.ewb/
+/artifacts/
 *.tmp

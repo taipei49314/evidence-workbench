@@ -10,6 +10,7 @@ use chrono::{SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
@@ -105,6 +106,22 @@ pub enum CapsulesSubcommand {
     Show { capsule_id: String },
     /// Re-hash the descriptor, launcher, support tree, and qualification evidence.
     Verify { capsule_id: String },
+    /// Inventory a closed root into a fail-closed runtime-capsule/v1 file.
+    /// Does not admit the capsule, does not plan, and never reports ready.
+    Snapshot {
+        #[arg(long, value_name = "DIRECTORY")]
+        root: PathBuf,
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        #[arg(long)]
+        tool: String,
+        #[arg(long)]
+        operation: String,
+        #[arg(long)]
+        launcher: Option<String>,
+        #[arg(long, default_value = "host-cpython")]
+        abi: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -419,6 +436,32 @@ fn tools(command: &ToolsCommand) -> Result<CommandOutcome> {
 }
 
 fn capsules(cli: &Cli, command: &CapsulesCommand) -> Result<CommandOutcome> {
+    if let CapsulesSubcommand::Snapshot {
+        root,
+        out,
+        tool,
+        operation,
+        launcher,
+        abi,
+    } = &command.command
+    {
+        let capsule = runtime_capsules::snapshot_descriptor(
+            root,
+            launcher.as_deref(),
+            tool,
+            operation,
+            abi,
+        )?;
+        if let Some(parent) = out.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).context("cannot create snapshot output directory")?;
+            }
+        }
+        fs::write(out, serde_json::to_vec_pretty(&capsule)?)
+            .context("cannot write runtime capsule snapshot")?;
+        return success("capsules.snapshot", serde_json::to_value(capsule)?);
+    }
+
     let workspace = open_workspace(cli)?;
     match &command.command {
         CapsulesSubcommand::Admit { descriptor, root } => success(
@@ -437,6 +480,7 @@ fn capsules(cli: &Cli, command: &CapsulesCommand) -> Result<CommandOutcome> {
             "capsules.verify",
             serde_json::to_value(runtime_capsules::verify(&workspace, capsule_id)?)?,
         ),
+        CapsulesSubcommand::Snapshot { .. } => unreachable!("snapshot handled before workspace open"),
     }
 }
 

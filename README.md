@@ -17,7 +17,7 @@ The embedded `upstream_pin/v1` registry covers all twelve trusted tool manifests
 | `greenwash` | Verification-integrity diff | Fail closed: Python capsule, Git metadata, and fixed execution-time Git are missing |
 | `repopass-inspect` | Offline repository inspection | Fail closed: source qualification blocked; no admitted Windows executable; Git dependency unbound |
 | `trust-meter` | Advisory structural measure | Fail closed: Python capsule and ambient ancestor config isolation missing |
-| `phaseledger` | Caller-observation gate | Fail closed: exact-byte capsule admission exists; OS-enforced no-network/process containment is not implemented |
+| `phaseledger` | Caller-observation gate | Fail closed: pin at v0.6.0 (`--version` exists); exact-byte capsule admission exists; OS-enforced no-network/process containment is not implemented |
 | `unasked` | Research/authority workflow | Fail closed: runtime/Git closure, non-certifying posture, and proprietary redistribution boundary |
 | `normshift` | Standards semantic-change replay | Fail closed: Python capsule and multi-file source bundle missing |
 | `smallestlie` | Authorized falsification | Fail closed: runtime, authorization, process-tree, and OS egress containment missing |
@@ -69,6 +69,24 @@ $capsule = ewb --json --workspace C:\evidence-workspace capsules admit `
 ewb --json --workspace C:\evidence-workspace capsules verify `
   $capsule.data.capsule_id
 ```
+
+`capsules snapshot` walks a closed root and writes a `runtime-capsule/v1`
+descriptor. It never admits the capsule, never plans, and the descriptor is
+always `fail_closed` (`python_capsule_execution_containment_unimplemented`
+plus any missing stdlib or qualification). A host copy is not a qualified
+embeddable distribution.
+
+```powershell
+ewb --json capsules snapshot `
+  --root C:\capsules\phaseledger\runtime `
+  --out C:\capsules\phaseledger\runtime-capsule.json `
+  --tool phaseledger --operation phaseledger_measure
+```
+
+`scripts/snapshot-phaseledger-runtime.ps1` copies the host `python.exe`,
+sibling interpreter DLLs/zip, and the installed `phaseledger` package into
+`artifacts/phaseledger-runtime/runtime/` (gitignored) and runs that command.
+The resulting tree is for local admission experiments only.
 
 `admit` never downloads or installs anything. It rejects extra, missing,
 linked, reparse, or hash-mismatched files; all qualification evidence must
@@ -248,7 +266,7 @@ The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or
 - Only embedded manifests are executable; parameters are allowlisted and typed.
 - Capability approval is deny-by-default but **is not an OS sandbox**. The native tool still runs as the current user.
 - Child environment variables are minimized. This reduces accidental credential inheritance but does not remove the process's filesystem authority.
-- Timeout kills the direct child. This MVP does not claim Windows Job Object or Unix process-group containment.
+- On Windows, timeout kills the direct child and then closes a Job Object with `KILL_ON_JOB_CLOSE`. The child is assigned after spawn, so a grandchild can race that assignment. Unix still kills only the direct child. This is not OS network containment.
 - Native output capture is bounded at 32 MiB. Exceeding it records an interrupted run with no native result.
 - Storage directories and artifact files reject symlinks/reparse points at validation time. Full handle-relative, race-free containment against a same-user adversary is not yet claimed.
 - Clean Git commit identity is required. Dirty and untracked working trees fail closed.
