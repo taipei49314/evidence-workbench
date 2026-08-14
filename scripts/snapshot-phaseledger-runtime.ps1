@@ -22,8 +22,13 @@ New-Item -ItemType Directory -Force -Path $runtime | Out-Null
 $prefix = & py -3.11 -c "import sys; print(sys.base_prefix)"
 if (-not (Test-Path $prefix)) { throw "python prefix missing: $prefix" }
 
-$pkg = & py -3.11 -c "import phaseledger, pathlib; print(pathlib.Path(phaseledger.__file__).resolve().parent)" 2>$null
-if ($LASTEXITCODE -ne 0 -or -not $pkg) {
+$pkg = $null
+try {
+    $pkg = & py -3.11 -c "import phaseledger, pathlib; print(pathlib.Path(phaseledger.__file__).resolve().parent)" 2>$null
+} catch {
+    $pkg = $null
+}
+if (-not $pkg) {
     $sibling = Join-Path (Split-Path $projectRoot) 'phaseledger\phaseledger'
     if (Test-Path (Join-Path $sibling '__init__.py')) {
         $pkg = $sibling
