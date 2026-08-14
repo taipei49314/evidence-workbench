@@ -20,9 +20,16 @@ if (Test-Path $runtime) { Remove-Item -Recurse -Force $runtime }
 New-Item -ItemType Directory -Force -Path $runtime | Out-Null
 
 $prefix = & py -3.11 -c "import sys; print(sys.base_prefix)"
-$pkg = & py -3.11 -c "import phaseledger, pathlib; print(pathlib.Path(phaseledger.__file__).resolve().parent)"
 if (-not (Test-Path $prefix)) { throw "python prefix missing: $prefix" }
-if (-not (Test-Path $pkg)) { throw "phaseledger package missing: $pkg" }
+
+$pkg = & py -3.11 -c "import phaseledger, pathlib; print(pathlib.Path(phaseledger.__file__).resolve().parent)" 2>$null
+if ($LASTEXITCODE -ne 0 -or -not $pkg) {
+    $sibling = Join-Path (Split-Path $projectRoot) 'phaseledger\phaseledger'
+    if (Test-Path (Join-Path $sibling '__init__.py')) {
+        $pkg = $sibling
+    }
+}
+if (-not $pkg -or -not (Test-Path $pkg)) { throw 'phaseledger package missing; install it or place a sibling checkout' }
 
 Write-Output "interpreter prefix: $prefix"
 Write-Output "phaseledger package: $pkg"
