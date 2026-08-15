@@ -259,7 +259,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
 }
 
 fn init(cli: &Cli) -> Result<CommandOutcome> {
-    let root = requested_root(cli)?;
+    let root = requested_path(cli)?;
     let workspace = workspace::Workspace::init(&root)?;
     let candidate_pins = candidate_pins::all()?;
     let upstream_pins = upstream_pins::all()?;
@@ -832,6 +832,13 @@ fn requested_root(cli: &Cli) -> Result<PathBuf> {
     };
     path.canonicalize()
         .with_context(|| format!("cannot resolve workspace root {}", path.display()))
+}
+
+fn requested_path(cli: &Cli) -> Result<PathBuf> {
+    match &cli.workspace {
+        Some(path) => Ok(path.clone()),
+        None => Ok(std::env::current_dir()?),
+    }
 }
 
 fn validate_role(role: &str) -> Result<()> {

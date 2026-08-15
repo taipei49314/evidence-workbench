@@ -278,6 +278,43 @@ fn json_mode_wraps_argument_errors_without_stderr_noise() {
 }
 
 #[test]
+fn init_creates_only_the_exact_new_workspace_root() {
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("brand new workspace");
+    assert!(!root.exists());
+
+    let (code, value, stderr) =
+        run_json(ewb().args(["--json", "--workspace"]).arg(&root).arg("init"));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["ok"], true);
+    assert_eq!(
+        PathBuf::from(value["data"]["root"].as_str().unwrap()),
+        root.canonicalize().unwrap()
+    );
+    assert!(root.join(".ewb/WORKSPACE.json").is_file());
+    let entries = fs::read_dir(parent.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(entries, vec![OsString::from("brand new workspace")]);
+}
+
+#[test]
+fn init_does_not_create_a_missing_parent_chain() {
+    let parent = TempDir::new().unwrap();
+    let missing_parent = parent.path().join("missing parent");
+    let root = missing_parent.join("workspace");
+
+    let (code, value, stderr) =
+        run_json(ewb().args(["--json", "--workspace"]).arg(&root).arg("init"));
+
+    assert_eq!(code, 2, "{value:?} {stderr}");
+    assert_eq!(value["ok"], false);
+    assert!(!missing_parent.exists());
+}
+
+#[test]
 fn doctor_is_read_only() {
     let temp = TempDir::new().unwrap();
     init(temp.path());
@@ -1637,13 +1674,14 @@ fn oversized_native_output_is_interrupted_without_importing_capture() {
 
 #[test]
 fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
-    let temp = TempDir::new().unwrap();
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("concurrent workspace");
     let mut initializers = Vec::new();
     for _ in 0..8 {
         initializers.push(
             ProcessCommand::new(binary("ewb"))
                 .args(["--json", "--workspace"])
-                .arg(temp.path())
+                .arg(&root)
                 .arg("init")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1655,7 +1693,7 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
         assert!(child.wait_with_output().unwrap().status.success());
     }
 
-    let source = temp.path().join("concurrent.bin");
+    let source = root.join("concurrent.bin");
     let bytes = b"one immutable object, many records\0\xff";
     fs::write(&source, bytes).unwrap();
     let mut children = Vec::new();
@@ -1663,7 +1701,7 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
         children.push(
             ProcessCommand::new(binary("ewb"))
                 .args(["--json", "--workspace"])
-                .arg(temp.path())
+                .arg(&root)
                 .args(["artifacts", "add", "--file"])
                 .arg(&source)
                 .args(["--role", "concurrent_fixture"])
@@ -1694,13 +1732,8 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
     assert_eq!(ids.len(), 12);
     assert_eq!(digests.len(), 1);
     assert_eq!(
-        fs::read_dir(temp.path().join(".ewb/artifacts"))
-            .unwrap()
-            .count(),
+        fs::read_dir(root.join(".ewb/artifacts")).unwrap().count(),
         12
     );
-    assert_eq!(
-        fs::read_dir(temp.path().join(".ewb/tmp")).unwrap().count(),
-        0
-    );
+    assert_eq!(fs::read_dir(root.join(".ewb/tmp")).unwrap().count(), 0);
 }

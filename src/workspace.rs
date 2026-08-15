@@ -46,12 +46,7 @@ struct WorkspaceMarker {
 
 impl Workspace {
     pub fn init(root: &Path) -> Result<Self> {
-        let root = root
-            .canonicalize()
-            .with_context(|| format!("cannot resolve workspace root {}", root.display()))?;
-        if !root.is_dir() {
-            bail!("workspace root is not a directory");
-        }
+        let root = prepare_workspace_root(root)?;
         let workspace = Self {
             state: root.join(STATE_DIR),
             root,
@@ -887,6 +882,68 @@ fn ensure_real_dir(path: &Path) -> Result<()> {
         }
         validate_real_dir(path)
     }
+}
+
+fn prepare_workspace_root(path: &Path) -> Result<PathBuf> {
+    if path.as_os_str().is_empty() {
+        bail!("workspace root cannot be empty");
+    }
+    if path.exists() {
+        validate_real_dir(path)?;
+        return path
+            .canonicalize()
+            .with_context(|| format!("cannot resolve workspace root {}", path.display()));
+    }
+
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("workspace root must name one directory"))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    validate_real_directory_chain(parent)?;
+    let parent = parent
+        .canonicalize()
+        .with_context(|| format!("cannot resolve workspace parent {}", parent.display()))?;
+    validate_real_dir(&parent)?;
+
+    // Create only the requested leaf. Missing parent chains are rejected instead of
+    // silently broadening `init` into a recursive filesystem mutation.
+    let root = parent.join(name);
+    match retry_transient(|| fs::create_dir(&root)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("cannot create workspace root {}", root.display()));
+        }
+    }
+    validate_real_dir(&root)?;
+    let canonical = root
+        .canonicalize()
+        .with_context(|| format!("cannot resolve workspace root {}", root.display()))?;
+    if canonical.parent() != Some(parent.as_path()) {
+        bail!("workspace root resolved outside its exact parent");
+    }
+    Ok(canonical)
+}
+
+fn validate_real_directory_chain(path: &Path) -> Result<()> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut ancestors = absolute.ancestors().collect::<Vec<_>>();
+    ancestors.reverse();
+    for ancestor in ancestors {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        validate_real_dir(ancestor)?;
+    }
+    Ok(())
 }
 
 fn validate_real_dir(path: &Path) -> Result<()> {
