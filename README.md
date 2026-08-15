@@ -249,16 +249,19 @@ ewb --json --workspace C:\evidence-workspace runs execute `
   --plan-digest $measure.data.record_digest `
   --allow read_subject
 
+$artifact = ewb --json --workspace C:\evidence-workspace artifacts add `
+  --file C:\evidence\observation.json --role handoff_input `
+  --media-type application/json | ConvertFrom-Json
 $gate = ewb --json --workspace C:\evidence-workspace runs plan `
   --tool phaseledger --runtime-capsule $capsule.data.capsule_id `
-  --input C:\evidence\observation.json | ConvertFrom-Json
+  --input-artifact $artifact.data.artifact_id | ConvertFrom-Json
 ewb --json --workspace C:\evidence-workspace runs execute `
   --plan $gate.data.plan_id `
   --plan-digest $gate.data.record_digest `
   --allow read_artifact
 ```
 
-The caller remains responsible for constructing an honest phaseledger observation whose claim scope names the exact subject and predicate source. Even a `ready` exact-byte capsule currently stops before plan creation with `python_capsule_execution_containment_unimplemented`: the minimized process environment is not an OS-enforced network or child-process sandbox.
+The caller remains responsible for constructing an honest phaseledger observation whose claim scope names the exact subject and predicate source. `--input-artifact` selects one existing verified workspace artifact by its exact ID; it does not inspect handoffs or runs and does not infer a producer. `--input FILE` remains available for a new byte-for-byte import and defaults to `application/json`; `--input-media-type` is valid only with that file-import form. Even a `ready` exact-byte capsule currently stops before plan creation with `python_capsule_execution_containment_unimplemented`: the minimized process environment is not an OS-enforced network or child-process sandbox.
 
 ### StateWeaver candidate admission and future invocation (execution currently fails closed)
 
@@ -293,6 +296,26 @@ ewb --json --workspace C:\evidence-workspace artifacts verify `
 ```
 
 Objects live at `.ewb/objects/sha256/<prefix>/<suffix>`. Records use generated ASCII IDs and content-addressed URIs. Import copies raw bytes while hashing, uses atomic commit, and stores an empty `transforms` list. JSON projections are never substituted for the native artifact.
+
+For an artifact-scoped adapter, `runs plan --input-artifact <ARTIFACT_ID>`
+re-verifies that exact artifact registry record and CAS object before any native
+snapshot can be written, then records the selected artifact ID, SHA-256, length,
+and media type in the existing `Subject::Artifact` v1 shape. Reusing the input
+does not create a replacement input artifact, duplicate its CAS bytes, create a
+handoff, or create an execution directory during planning. Normal planning may
+still create its own native tool-identity snapshots. At execution, EWB derives
+`.ewb/executions/<PLAN_ID>/input` internally and streams the CAS object through
+one verified source handle into a new private single-link file; it does not use
+a hard link, reflink, parse, or reserialization. A pre-existing execution root
+is never overwritten, and a failed materialization removes only the root created
+for that attempt.
+
+This plan binding deliberately does **not** include the enclosing
+`ArtifactRecord`'s `record_digest`, roles, origin, capture mode, transforms, or
+producer provenance because `instrument_run/v1` has no fields for them. It also
+keeps `source_run_id: null`. Use the independent handoff registry when verified
+run-to-plan-to-artifact lineage is required; planning never searches that
+registry or promotes it into native authority.
 
 [`evidence-handoff/v1`](contracts/evidence-handoff-v1.schema.json) defines a
 closed, reference-only plan/run/artifact descriptor. It fixes the relationship
@@ -382,6 +405,10 @@ The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or
   CAS objects, and staged private files must also have exactly one hard-link
   name when read or verified. Full handle-relative, race-free containment
   against a same-user adversary is not yet claimed.
+- Reused artifact inputs are copied from the verified CAS handle into a
+  plan-scoped `create_new` private file and re-hashed before execution. The
+  source object, CAS shard, execution root, and materialized file reject links
+  or reparse points; no hardlink or reflink is used for handoff.
 - Clean Git commit identity is required. Dirty and untracked working trees fail closed.
 - Python-backed planning is disabled until the launcher, interpreter, runtime, distribution, and transitive dependencies can all be snapshotted immutably.
 - Each production manifest has one embedded `upstream_pin/v1`. Its source/delivery/posture fields are registry evidence; only its separate `execution_readiness` field controls whether an exact operation has an admitted closure.

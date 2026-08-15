@@ -1191,6 +1191,29 @@ fn phaseledger_without_capsule_fails_before_importing_subject_or_plan() {
             .contains("runtime_capsule_required")
     );
     assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
+
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--input-artifact",
+                "artifact_99999999999999999999999999999999",
+            ]),
+    );
+
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("runtime_capsule_required")
+    );
+    assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
 }
 
 #[test]

@@ -65,6 +65,23 @@ digest. `handoffs show` and `list` are inspection surfaces, but repeat the same
 full workspace-lineage and exact-byte checks. A successful EWB command only
 means those checks completed; it is not a native or aggregate verdict.
 
+`ewb runs plan --input-artifact <ARTIFACT_ID>` is a separate artifact-subject
+selection surface, not a handoff lookup. For an artifact-scoped adapter it
+reloads the named `artifact_record/v1`, re-verifies its exact CAS bytes, and
+reuses the selected descriptor without importing or reserializing bytes. The
+existing `Subject::Artifact` v1 plan fields bind only the exact artifact ID,
+SHA-256, byte length, media type, execution path, and `source_run_id: null`.
+They do not bind the enclosing artifact record digest, roles, origin, capture
+mode, transforms, or producer provenance. No run or handoff registry is scanned
+and no producer is inferred. The plan-time semantic validator reloads the same
+artifact binding before the plan is committed. Execution separately copies the
+CAS bytes through one verified handle into a plan-scoped private `create_new`
+file; it never hardlinks, reflinks, parses, or reserializes the input.
+
+`--input <FILE>` remains the distinct new-import path. Its default media type is
+`application/json`, and `--input-media-type` is accepted only with that option.
+`--input-artifact` is mutually exclusive with both `--input` and `--subject`.
+
 `ewb candidates import --file <FILE>` first parses the exact descriptor bytes
 and verifies the full source artifact record digest, descriptor digest, object
 length, and object SHA-256 in the same workspace. Only then does it copy the

@@ -13,7 +13,7 @@ The workbench is transport and orchestration. It is not an authority.
 7. `BLOCKED`, `UNKNOWN`, `UNSUPPORTED`, `INCONCLUSIVE`, missing output, parse failure, timeout, and spawn failure never become a pass.
 8. Authority is never inferred from a tool name, manifest, exit code, checksum, signature presence, or a native verdict.
 9. Plans bind the trusted manifest, recorder and adapter implementation, EWB-owned native launcher snapshot, exact subject snapshot, parameters, and direct argv. Execution requires the exact digest returned with the reviewed plan and revalidates those semantics before spawn.
-10. Git planning uses a fixed, locked Git identity to create an exact bundle plus deterministic plain-tree artifact. Git execution is Rust-only materialization and pre/post verification of that tree; the bundle is retained for provenance, and execute never launches Git or consults PATH. Artifact execution uses an exact private copy. The original worktree/input is never executed.
+10. Git planning uses a fixed, locked Git identity to create an exact bundle plus deterministic plain-tree artifact. Git execution is Rust-only materialization and pre/post verification of that tree; the bundle is retained for provenance, and execute never launches Git or consults PATH. Artifact execution streams the exact verified CAS object through one source handle into a plan-scoped `create_new` private single-link copy; it never hardlinks, reflinks, parses, or reserializes the input. The original worktree/input is never executed.
 11. Python adapters and non-Windows native execution fail closed until complete runtime snapshots and descriptor-based exec are implemented.
 12. Capability approval controls which trusted adapter operation EWB will launch. It is not an operating-system sandbox.
 13. A candidate pin records exact upstream source, delivery, and integrity-admission facts separately from the executable tool manifest. It supplies no native result or authority and never makes a non-runnable delivery executable.
@@ -23,6 +23,7 @@ The workbench is transport and orchestration. It is not an authority.
 17. Every production plan and run binds the exact embedded upstream-pin digest. A qualification-gated operation also binds a durable local qualification record ID and digest; manifest enablement alone never authorizes execution.
 18. Qualified native execution uses a private, content-addressed, launcher-only application directory and an EWB-owned empty PATH, checking exact inventories before and after spawn. Remaining same-user namespace races are limitations, not OS-containment claims.
 19. Every run names the exact durable source plan ID and digest, and must inherit that plan's tool, upstream/qualification refs, identities, subject, parameters, and invocation without substitution.
+20. `runs plan --input-artifact` selects one exact existing artifact ID without searching runs or handoffs. `instrument_run/v1` binds its ID, byte digest, length, and media type but does not claim to bind the enclosing artifact-record digest, roles, origin, capture metadata, transforms, or producer lineage; `source_run_id` remains null.
 
 ## Native-result vocabulary
 

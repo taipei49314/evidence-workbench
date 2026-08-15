@@ -10,7 +10,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -617,6 +617,138 @@ impl Workspace {
             .with_context(|| format!("cannot read verified artifact object {}", path.display()))
     }
 
+    /// Copy one verified CAS object into the private execution input path for a
+    /// specific plan. The destination is derived here rather than accepted from
+    /// the caller, and the CAS object is read, hashed, and copied through the
+    /// same handle so execution never follows a path after a separate verify.
+    pub(crate) fn materialize_artifact_execution_input(
+        &self,
+        plan_id: &str,
+        descriptor: &ArtifactDescriptor,
+    ) -> Result<PathBuf> {
+        validate_prefixed_id(plan_id, "plan_")?;
+        run_validation::validate_artifact_descriptor(descriptor)?;
+
+        let source_path = self.object_path(&descriptor.digest.value)?;
+        self.validate_object_storage_path(&source_path)?;
+        let path_metadata = fs::symlink_metadata(&source_path)
+            .with_context(|| format!("cannot inspect artifact object {}", source_path.display()))?;
+        if !path_metadata.is_file() || is_reparse(&path_metadata) {
+            bail!("artifact object is not a regular single-link file");
+        }
+        let mut source = open_artifact_read_no_write_share(&source_path)
+            .with_context(|| format!("cannot open artifact object {}", source_path.display()))?;
+        let source_metadata = source.metadata()?;
+        if !source_metadata.is_file()
+            || is_reparse(&source_metadata)
+            || !file_has_single_link(&source, &source_metadata)?
+        {
+            bail!("artifact object is not a regular single-link file");
+        }
+        if source_metadata.len() != descriptor.byte_length {
+            bail!("artifact bytes do not match their recorded digest and length");
+        }
+
+        validate_real_dir(&self.state)?;
+        let executions = self.state.join("executions");
+        validate_real_dir(&executions)?;
+        let root = self.execution_path(plan_id)?;
+        fs::create_dir(&root).with_context(|| {
+            format!(
+                "cannot create new private artifact execution root {}",
+                root.display()
+            )
+        })?;
+
+        let materialized = (|| -> Result<PathBuf> {
+            validate_real_dir(&root)?;
+            let destination = root.join("input");
+            let mut output = create_private_file(&destination).with_context(|| {
+                format!(
+                    "cannot create private artifact execution input {}",
+                    destination.display()
+                )
+            })?;
+
+            let mut hasher = Sha256::new();
+            let mut length = 0_u64;
+            let mut buffer = [0_u8; 64 * 1024];
+            loop {
+                let read = source.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                output.write_all(&buffer[..read])?;
+                hasher.update(&buffer[..read]);
+                length = length
+                    .checked_add(read as u64)
+                    .ok_or_else(|| anyhow::anyhow!("artifact byte length overflow"))?;
+                if length > descriptor.byte_length {
+                    bail!("artifact bytes do not match their recorded digest and length");
+                }
+            }
+            output.sync_all()?;
+            let output_metadata = output.metadata()?;
+            if !output_metadata.is_file()
+                || is_reparse(&output_metadata)
+                || !file_has_single_link(&output, &output_metadata)?
+            {
+                bail!("private artifact execution input must be a regular single-link file");
+            }
+            let source_digest = hex::encode(hasher.finalize());
+            if length != descriptor.byte_length || source_digest != descriptor.digest.value {
+                bail!("artifact bytes do not match their recorded digest and length");
+            }
+
+            output.seek(SeekFrom::Start(0))?;
+            let mut output_hasher = Sha256::new();
+            let mut output_length = 0_u64;
+            loop {
+                let read = output.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                output_hasher.update(&buffer[..read]);
+                output_length = output_length
+                    .checked_add(read as u64)
+                    .ok_or_else(|| anyhow::anyhow!("artifact byte length overflow"))?;
+                if output_length > descriptor.byte_length {
+                    bail!("artifact execution copy does not match its recorded identity");
+                }
+            }
+            if output_length != descriptor.byte_length
+                || hex::encode(output_hasher.finalize()) != descriptor.digest.value
+            {
+                bail!("artifact execution copy does not match its recorded identity");
+            }
+            drop(output);
+
+            validate_real_dir(&root)?;
+            verify_file(
+                &destination,
+                &descriptor.digest.value,
+                descriptor.byte_length,
+            )?;
+            let entries = fs::read_dir(&root)?.collect::<Result<Vec<_>, _>>()?;
+            if entries.len() != 1 || entries[0].file_name() != std::ffi::OsStr::new("input") {
+                bail!("private artifact execution root inventory is not input-only");
+            }
+            Ok(destination)
+        })();
+
+        match materialized {
+            Ok(destination) => Ok(destination),
+            Err(error) => {
+                if let Err(cleanup_error) = rollback_artifact_execution_root(&executions, &root) {
+                    return Err(anyhow::anyhow!(
+                        "artifact input materialization failed: {error:#}; also failed to roll back private artifact execution root: {cleanup_error:#}"
+                    ));
+                }
+                Err(error)
+            }
+        }
+    }
+
     fn validate_object_storage_path(&self, object_path: &Path) -> Result<()> {
         validate_real_dir(&self.state)?;
         let objects = self.state.join("objects");
@@ -899,6 +1031,36 @@ fn validate_artifact_capture_contract(
     }
     if !matches!(capture_mode, "byte_for_byte_copy" | "raw_stream_capture") {
         bail!("artifact capture mode is outside the v1 contract");
+    }
+    Ok(())
+}
+
+fn rollback_artifact_execution_root(executions: &Path, root: &Path) -> Result<()> {
+    if root.parent() != Some(executions) {
+        bail!("refusing to roll back a path outside EWB executions storage");
+    }
+    validate_real_dir(executions)?;
+    match fs::symlink_metadata(root) {
+        Ok(metadata) => {
+            if !metadata.is_dir() || is_reparse(&metadata) {
+                bail!("refusing to roll back a linked artifact execution root");
+            }
+            fs::remove_dir_all(root).with_context(|| {
+                format!(
+                    "cannot remove failed artifact execution root {}",
+                    root.display()
+                )
+            })?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "cannot inspect failed artifact execution root {}",
+                    root.display()
+                )
+            });
+        }
     }
     Ok(())
 }
@@ -1214,6 +1376,32 @@ fn read_verified_file(path: &Path, expected_digest: &str, expected_length: u64) 
 }
 
 #[cfg(windows)]
+fn create_private_file(path: &Path) -> Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x0800_0000;
+
+    Ok(OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN)
+        .open(path)?)
+}
+
+#[cfg(not(windows))]
+fn create_private_file(path: &Path) -> Result<File> {
+    Ok(OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)?)
+}
+
+#[cfg(windows)]
 fn open_artifact_read_no_write_share(path: &Path) -> Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
 
@@ -1374,5 +1562,140 @@ mod tests {
 
         drop(handle);
         fs::write(&path, b"updated").unwrap();
+    }
+
+    #[test]
+    fn artifact_execution_inputs_are_private_plan_scoped_copies() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = Workspace::init(temporary.path()).unwrap();
+        let source = temporary.path().join("handoff.json");
+        let expected = br#"{"native":"exact"}"#;
+        fs::write(&source, expected).unwrap();
+        let descriptor = workspace
+            .import_artifact(
+                &source,
+                vec!["handoff_input".to_owned()],
+                "application/json".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        let first_plan = "plan_11111111111111111111111111111111";
+        let second_plan = "plan_22222222222222222222222222222222";
+
+        let first = workspace
+            .materialize_artifact_execution_input(first_plan, &descriptor)
+            .unwrap();
+        let second = workspace
+            .materialize_artifact_execution_input(second_plan, &descriptor)
+            .unwrap();
+
+        assert_eq!(
+            first,
+            workspace.execution_path(first_plan).unwrap().join("input")
+        );
+        assert_eq!(
+            second,
+            workspace.execution_path(second_plan).unwrap().join("input")
+        );
+        assert_eq!(fs::read(&first).unwrap(), expected);
+        assert_eq!(fs::read(&second).unwrap(), expected);
+        verify_private_file(&first, &descriptor.digest.value, descriptor.byte_length).unwrap();
+        verify_private_file(&second, &descriptor.digest.value, descriptor.byte_length).unwrap();
+
+        fs::write(&first, b"private mutation").unwrap();
+        assert_eq!(fs::read(&second).unwrap(), expected);
+        assert_eq!(
+            workspace.read_verified_descriptor(&descriptor).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn artifact_execution_materialization_never_overwrites_a_preexisting_root() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = Workspace::init(temporary.path()).unwrap();
+        let source = temporary.path().join("input.bin");
+        fs::write(&source, b"exact").unwrap();
+        let descriptor = workspace
+            .import_artifact(
+                &source,
+                vec!["handoff_input".to_owned()],
+                "application/octet-stream".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        let plan_id = "plan_33333333333333333333333333333333";
+        let root = workspace.execution_path(plan_id).unwrap();
+        fs::create_dir(&root).unwrap();
+        let sentinel = root.join("do-not-overwrite");
+        fs::write(&sentinel, b"owned").unwrap();
+
+        let error = workspace
+            .materialize_artifact_execution_input(plan_id, &descriptor)
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("cannot create new private artifact execution root"));
+        assert_eq!(fs::read(sentinel).unwrap(), b"owned");
+        assert!(!root.join("input").exists());
+    }
+
+    #[test]
+    fn artifact_execution_materialization_rolls_back_a_failed_copy() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = Workspace::init(temporary.path()).unwrap();
+        let source = temporary.path().join("input.bin");
+        fs::write(&source, b"native").unwrap();
+        let descriptor = workspace
+            .import_artifact(
+                &source,
+                vec!["handoff_input".to_owned()],
+                "application/octet-stream".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        let object = workspace.object_path(&descriptor.digest.value).unwrap();
+        fs::write(&object, b"forged").unwrap();
+        let plan_id = "plan_44444444444444444444444444444444";
+
+        let error = workspace
+            .materialize_artifact_execution_input(plan_id, &descriptor)
+            .unwrap_err();
+
+        assert!(
+            format!("{error:#}")
+                .contains("artifact bytes do not match their recorded digest and length")
+        );
+        assert!(!workspace.execution_path(plan_id).unwrap().exists());
+    }
+
+    #[test]
+    fn artifact_execution_materialization_rejects_a_hardlinked_cas_object() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = Workspace::init(temporary.path()).unwrap();
+        let source = temporary.path().join("input.bin");
+        fs::write(&source, b"native").unwrap();
+        let descriptor = workspace
+            .import_artifact(
+                &source,
+                vec!["handoff_input".to_owned()],
+                "application/octet-stream".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        let object = workspace.object_path(&descriptor.digest.value).unwrap();
+        let alias = temporary.path().join("external-object-alias");
+        fs::hard_link(&object, &alias).unwrap();
+        let plan_id = "plan_55555555555555555555555555555555";
+
+        let error = workspace
+            .materialize_artifact_execution_input(plan_id, &descriptor)
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("single-link"));
+        assert!(!workspace.execution_path(plan_id).unwrap().exists());
     }
 }
