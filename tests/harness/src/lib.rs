@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod build_identity;
 #[path = "../../../src/candidate_pins.rs"]
 pub mod candidate_pins;
 #[path = "../../../src/cli.rs"]

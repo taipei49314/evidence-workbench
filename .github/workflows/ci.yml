@@ -85,6 +85,24 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Record builder-asserted VCS base
+        shell: pwsh
+        run: |
+          $commit = (& git rev-parse HEAD | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "cannot resolve package commit" }
+          $tree = (& git rev-parse 'HEAD^{tree}' | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "cannot resolve package tree" }
+          $dirty = @(& git status --porcelain=v1 --untracked-files=normal)
+          if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw "package checkout is not clean" }
+          "EWB_BUILD_VCS_COMMIT=$commit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EWB_BUILD_VCS_TREE=$tree" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EWB_BUILD_VCS_DIRTY=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $tags = @(& git tag --points-at HEAD)
+          if ($LASTEXITCODE -ne 0) { throw "cannot inspect package tags" }
+          $tags = @($tags | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+          if ($tags.Count -eq 1) {
+            "EWB_BUILD_VCS_TAG=$($tags[0])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal
       - name: Select Rust toolchain
@@ -92,7 +110,36 @@ jobs:
       - name: Verify package contents and build
         run: cargo package --locked
       - name: Install packaged production binary
-        run: cargo install --locked --path . --root target/ci-install
+        shell: pwsh
+        run: |
+          $sources = @(Get-ChildItem -LiteralPath target/package -Directory | Where-Object Name -Like 'evidence-workbench-*')
+          if ($sources.Count -ne 1) { throw "expected one extracted evidence-workbench package source" }
+          cargo install --locked --path $sources[0].FullName --root target/ci-install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify packaged build identity
+        shell: pwsh
+        run: |
+          $binary = 'target/ci-install/bin/ewb'
+          $build = & $binary --json build show | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $build.ok -or $build.command -ne 'build.show') {
+            throw "packaged build show failed"
+          }
+          if ($build.data.schema_version -ne 'build_identity/v1') { throw "unexpected build schema" }
+          if ($build.data.vcs_base.reporting_state -ne 'builder_asserted') { throw "VCS base was not builder asserted" }
+          if ($build.data.vcs_base.scope -ne 'builder_recorded_vcs_base') { throw "VCS scope overclaims packaged source" }
+          if ($build.data.vcs_base.commit -ne $env:EWB_BUILD_VCS_COMMIT) { throw "packaged commit base drifted" }
+          if ($build.data.vcs_base.tree -ne $env:EWB_BUILD_VCS_TREE) { throw "packaged tree base drifted" }
+          if ($build.data.vcs_base.dirty -ne $false) { throw "clean package base became dirty" }
+          if ([string]::IsNullOrWhiteSpace($env:EWB_BUILD_VCS_TAG)) {
+            if ($null -ne $build.data.vcs_base.exact_tag) { throw "packaged build guessed an exact tag" }
+          } elseif ($build.data.vcs_base.exact_tag -ne $env:EWB_BUILD_VCS_TAG) {
+            throw "packaged exact tag drifted"
+          }
+          $sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($build.data.executable.sha256 -ne $sha256) { throw "packaged executable digest drifted" }
+          if ($build.data.executable.byte_length -ne (Get-Item -LiteralPath $binary).Length) {
+            throw "packaged executable length drifted"
+          }
       - name: Verify production registry remains fail-closed
         shell: pwsh
         run: |

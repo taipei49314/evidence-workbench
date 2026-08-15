@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench build identity v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "package",
+    "executable",
+    "target",
+    "vcs_base",
+    "authority_effect"
+  ],
+  "properties": {
+    "schema_version": { "const": "build_identity/v1" },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "evidence-workbench" },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "executable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observation_scope", "sha256", "byte_length"],
+      "properties": {
+        "observation_scope": { "const": "current_executable_file_at_query" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "byte_length": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch"],
+      "properties": {
+        "os": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "arch": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+      }
+    },
+    "vcs_base": {
+      "oneOf": [
+        { "$ref": "#/$defs/not_reported_vcs_base" },
+        { "$ref": "#/$defs/clean_builder_asserted_sha1_vcs_base" },
+        { "$ref": "#/$defs/clean_builder_asserted_sha256_vcs_base" },
+        { "$ref": "#/$defs/dirty_builder_asserted_sha1_vcs_base" },
+        { "$ref": "#/$defs/dirty_builder_asserted_sha256_vcs_base" }
+      ]
+    },
+    "authority_effect": { "const": "none" }
+  },
+  "$defs": {
+    "not_reported_vcs_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reporting_state", "scope", "commit", "tree", "dirty", "exact_tag"],
+      "properties": {
+        "reporting_state": { "const": "not_reported" },
+        "scope": { "const": "not_reported" },
+        "commit": { "type": "null" },
+        "tree": { "type": "null" },
+        "dirty": { "type": "null" },
+        "exact_tag": { "type": "null" }
+      }
+    },
+    "clean_builder_asserted_sha1_vcs_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reporting_state", "scope", "commit", "tree", "dirty", "exact_tag"],
+      "properties": {
+        "reporting_state": { "const": "builder_asserted" },
+        "scope": { "const": "builder_recorded_vcs_base" },
+        "commit": { "$ref": "#/$defs/git_sha1" },
+        "tree": { "$ref": "#/$defs/git_sha1" },
+        "dirty": { "const": false },
+        "exact_tag": { "$ref": "#/$defs/exact_tag" }
+      }
+    },
+    "clean_builder_asserted_sha256_vcs_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reporting_state", "scope", "commit", "tree", "dirty", "exact_tag"],
+      "properties": {
+        "reporting_state": { "const": "builder_asserted" },
+        "scope": { "const": "builder_recorded_vcs_base" },
+        "commit": { "$ref": "#/$defs/git_sha256" },
+        "tree": { "$ref": "#/$defs/git_sha256" },
+        "dirty": { "const": false },
+        "exact_tag": { "$ref": "#/$defs/exact_tag" }
+      }
+    },
+    "dirty_builder_asserted_sha1_vcs_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reporting_state", "scope", "commit", "tree", "dirty", "exact_tag"],
+      "properties": {
+        "reporting_state": { "const": "builder_asserted" },
+        "scope": { "const": "builder_recorded_vcs_base" },
+        "commit": { "$ref": "#/$defs/git_sha1" },
+        "tree": { "$ref": "#/$defs/git_sha1" },
+        "dirty": { "const": true },
+        "exact_tag": { "type": "null" }
+      }
+    },
+    "dirty_builder_asserted_sha256_vcs_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reporting_state", "scope", "commit", "tree", "dirty", "exact_tag"],
+      "properties": {
+        "reporting_state": { "const": "builder_asserted" },
+        "scope": { "const": "builder_recorded_vcs_base" },
+        "commit": { "$ref": "#/$defs/git_sha256" },
+        "tree": { "$ref": "#/$defs/git_sha256" },
+        "dirty": { "const": true },
+        "exact_tag": { "type": "null" }
+      }
+    },
+    "exact_tag": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        }
+      ]
+    },
+    "git_sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "git_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

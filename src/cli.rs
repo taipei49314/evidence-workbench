@@ -2,8 +2,8 @@ use crate::contracts::{
     ArtifactDescriptor, PlanPayload, PlanRecordRef, Subject, ToolRef, UpstreamPinRef,
 };
 use crate::{
-    candidate_pins, git_subject, manifests, native, native_qualifications, runtime_capsules,
-    subject_candidates, upstream_pins, workspace,
+    build_identity, candidate_pins, git_subject, manifests, native, native_qualifications,
+    runtime_capsules, subject_candidates, upstream_pins, workspace,
 };
 use anyhow::{Context, Result, bail};
 use chrono::{SecondsFormat, Utc};
@@ -38,6 +38,8 @@ pub enum Command {
     Init,
     /// Report workspace health, trusted adapters, and missing native tools.
     Doctor,
+    /// Inspect the current executable file and fail-honest builder-recorded provenance.
+    Build(BuildCommand),
     /// Resolve immutable subjects.
     Subjects(SubjectsCommand),
     /// Inspect and probe embedded trusted tool manifests.
@@ -52,6 +54,18 @@ pub enum Command {
     Runs(RunsCommand),
     /// Import and verify exact-byte artifacts.
     Artifacts(ArtifactsCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct BuildCommand {
+    #[command(subcommand)]
+    pub command: BuildSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BuildSubcommand {
+    /// Show observed executable-file bytes and any builder-asserted VCS base.
+    Show,
 }
 
 #[derive(Debug, Args)]
@@ -248,6 +262,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
     match &cli.command {
         Command::Init => init(cli),
         Command::Doctor => doctor(cli),
+        Command::Build(command) => build(command),
         Command::Subjects(command) => subjects(command),
         Command::Tools(command) => tools(command),
         Command::Capsules(command) => capsules(cli, command),
@@ -258,8 +273,14 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
     }
 }
 
+fn build(command: &BuildCommand) -> Result<CommandOutcome> {
+    match command.command {
+        BuildSubcommand::Show => success("build.show", build_identity::current()?),
+    }
+}
+
 fn init(cli: &Cli) -> Result<CommandOutcome> {
-    let root = requested_root(cli)?;
+    let root = requested_path(cli)?;
     let workspace = workspace::Workspace::init(&root)?;
     let candidate_pins = candidate_pins::all()?;
     let upstream_pins = upstream_pins::all()?;
@@ -298,7 +319,8 @@ fn init(cli: &Cli) -> Result<CommandOutcome> {
 }
 
 fn doctor(cli: &Cli) -> Result<CommandOutcome> {
-    let root = requested_root(cli)?;
+    let requested_root = requested_root(cli)?;
+    let root = workspace::Workspace::find_root(cli.workspace.as_deref())?.unwrap_or(requested_root);
     let initialized = workspace::Workspace::is_initialized(&root);
     let workspace_check = if initialized {
         match workspace::Workspace::open(Some(&root)) {
@@ -832,6 +854,13 @@ fn requested_root(cli: &Cli) -> Result<PathBuf> {
     };
     path.canonicalize()
         .with_context(|| format!("cannot resolve workspace root {}", path.display()))
+}
+
+fn requested_path(cli: &Cli) -> Result<PathBuf> {
+    match &cli.workspace {
+        Some(path) => Ok(path.clone()),
+        None => Ok(std::env::current_dir()?),
+    }
 }
 
 fn validate_role(role: &str) -> Result<()> {

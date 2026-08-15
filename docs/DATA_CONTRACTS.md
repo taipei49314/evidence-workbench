@@ -18,7 +18,10 @@ authority.
   is not counted in that digest.
 - `ide-handoff/v1` gives an IDE immutable plan, run, and artifact references plus
   native namespace and authority-availability metadata. It carries no command,
-  arbitrary argument vector, aggregate verdict, or synthesized pass state.
+  arbitrary argument vector, aggregate verdict, or synthesized pass state. It
+  remains a backward-compatible, reference-only optional projection; it is not
+  the canonical integration carrier. The canonical boundary is the EWB JSON
+  envelope, exact CAS artifacts, and immutable plan/run identities and digests.
 
 Every object shape is closed with `additionalProperties: false`. Rust parsing
 also rejects duplicate JSON keys and applies semantic cross-field validation.

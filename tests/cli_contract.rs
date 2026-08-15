@@ -6,7 +6,7 @@ use evidence_workbench::manifests;
 use evidence_workbench::workspace::digest_serialized;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 #[cfg(windows)]
@@ -269,12 +269,230 @@ fn tree_snapshot(root: &Path) -> BTreeMap<String, String> {
     output
 }
 
+#[cfg(unix)]
+fn create_directory_link(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("create directory symlink fixture");
+}
+
+#[cfg(windows)]
+fn create_directory_link(target: &Path, link: &Path) {
+    let output = ProcessCommand::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .expect("create directory junction fixture");
+    assert!(
+        output.status.success(),
+        "mklink /J failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn json_mode_wraps_argument_errors_without_stderr_noise() {
     let (code, value, stderr) = run_json(ewb().args(["--json", "not-a-command"]));
     assert_eq!(code, 2);
     assert_eq!(value["ok"], false);
     assert!(stderr.is_empty(), "stderr was not pure: {stderr:?}");
+}
+
+#[test]
+fn build_show_observes_the_current_executable_file_without_workspace_writes() {
+    let temp = TempDir::new().unwrap();
+    let before = tree_snapshot(temp.path());
+    let executable_path = assert_cmd::cargo::cargo_bin("ewb");
+    let executable_bytes = fs::read(&executable_path).unwrap();
+
+    let (code, value, stderr) = run_json(
+        production_ewb()
+            .current_dir(temp.path())
+            .args(["--json", "build", "show"]),
+    );
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert!(stderr.is_empty(), "stderr was not pure: {stderr:?}");
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["command"], "build.show");
+    assert_eq!(value["data"]["schema_version"], "build_identity/v1");
+    assert_eq!(value["data"]["package"]["name"], "evidence-workbench");
+    assert_eq!(
+        value["data"]["package"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(
+        value["data"]["executable"]["observation_scope"],
+        "current_executable_file_at_query"
+    );
+    assert_eq!(
+        value["data"]["executable"]["sha256"],
+        hex::encode(Sha256::digest(&executable_bytes))
+    );
+    assert_eq!(
+        value["data"]["executable"]["byte_length"],
+        u64::try_from(executable_bytes.len()).unwrap()
+    );
+    assert_eq!(value["data"]["authority_effect"], "none");
+
+    let data_keys = value["data"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        data_keys,
+        BTreeSet::from([
+            "authority_effect",
+            "executable",
+            "package",
+            "schema_version",
+            "target",
+            "vcs_base",
+        ])
+    );
+    let vcs = &value["data"]["vcs_base"];
+    let vcs_keys = vcs
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        vcs_keys,
+        BTreeSet::from([
+            "commit",
+            "dirty",
+            "exact_tag",
+            "reporting_state",
+            "scope",
+            "tree",
+        ])
+    );
+    match vcs["reporting_state"].as_str().unwrap() {
+        "not_reported" => {
+            assert_eq!(vcs["scope"], "not_reported");
+            for field in ["commit", "tree", "dirty", "exact_tag"] {
+                assert_eq!(vcs[field], Value::Null);
+            }
+        }
+        "builder_asserted" => {
+            assert_eq!(vcs["scope"], "builder_recorded_vcs_base");
+            for field in ["commit", "tree"] {
+                let oid = vcs[field].as_str().unwrap();
+                assert!(matches!(oid.len(), 40 | 64));
+                assert!(oid.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            }
+            let dirty = vcs["dirty"].as_bool().unwrap();
+            if dirty {
+                assert_eq!(vcs["exact_tag"], Value::Null);
+            }
+        }
+        state => panic!("unexpected VCS reporting state: {state}"),
+    }
+    assert_eq!(before, tree_snapshot(temp.path()));
+}
+
+#[test]
+fn init_creates_only_the_exact_new_workspace_root() {
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("brand new workspace");
+    assert!(!root.exists());
+
+    let (code, value, stderr) =
+        run_json(ewb().args(["--json", "--workspace"]).arg(&root).arg("init"));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["ok"], true);
+    assert_eq!(
+        PathBuf::from(value["data"]["root"].as_str().unwrap()),
+        root.canonicalize().unwrap()
+    );
+    assert!(root.join(".ewb/WORKSPACE.json").is_file());
+    let entries = fs::read_dir(parent.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(entries, vec![OsString::from("brand new workspace")]);
+}
+
+#[test]
+fn init_does_not_create_a_missing_parent_chain() {
+    let parent = TempDir::new().unwrap();
+    let missing_parent = parent.path().join("missing parent");
+    let root = missing_parent.join("workspace");
+
+    let (code, value, stderr) =
+        run_json(ewb().args(["--json", "--workspace"]).arg(&root).arg("init"));
+
+    assert_eq!(code, 2, "{value:?} {stderr}");
+    assert_eq!(value["ok"], false);
+    assert!(!missing_parent.exists());
+}
+
+#[test]
+fn init_rejects_a_linked_workspace_root_without_writing_the_target() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().join("target");
+    let linked_root = temp.path().join("linked root");
+    fs::create_dir(&target).unwrap();
+    create_directory_link(&target, &linked_root);
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(&linked_root)
+            .arg("init"),
+    );
+
+    assert_eq!(code, 2, "{value:?} {stderr}");
+    assert_eq!(value["ok"], false);
+    assert!(!target.join(".ewb").exists());
+}
+
+#[test]
+fn init_rejects_a_missing_leaf_below_a_linked_parent() {
+    let temp = TempDir::new().unwrap();
+    let target_parent = temp.path().join("target parent");
+    let linked_parent = temp.path().join("linked parent");
+    fs::create_dir(&target_parent).unwrap();
+    create_directory_link(&target_parent, &linked_parent);
+    let requested_root = linked_parent.join("missing workspace");
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(&requested_root)
+            .arg("init"),
+    );
+
+    assert_eq!(code, 2, "{value:?} {stderr}");
+    assert_eq!(value["ok"], false);
+    assert!(!target_parent.join("missing workspace").exists());
+    assert!(!target_parent.join(".ewb").exists());
+}
+
+#[test]
+fn init_rejects_an_existing_child_below_a_linked_parent() {
+    let temp = TempDir::new().unwrap();
+    let target_parent = temp.path().join("target parent");
+    let target_child = target_parent.join("existing workspace");
+    let linked_parent = temp.path().join("linked parent");
+    fs::create_dir_all(&target_child).unwrap();
+    create_directory_link(&target_parent, &linked_parent);
+    let requested_root = linked_parent.join("existing workspace");
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(&requested_root)
+            .arg("init"),
+    );
+
+    assert_eq!(code, 2, "{value:?} {stderr}");
+    assert_eq!(value["ok"], false);
+    assert!(!target_child.join(".ewb").exists());
 }
 
 #[test]
@@ -310,6 +528,145 @@ fn doctor_is_read_only() {
     assert_eq!(stateweaver["execution_readiness"]["state"], "fail_closed");
     assert!(!temp.path().join(".fake-version-probe-ran").exists());
     assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
+}
+
+#[test]
+fn doctor_discovers_the_workspace_upward_without_an_explicit_root() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let nested = temp.path().join("nested/deeper");
+    fs::create_dir_all(&nested).unwrap();
+    let before = tree_snapshot(&temp.path().join(".ewb"));
+
+    let (code, value, stderr) = run_json(ewb().current_dir(&nested).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], true);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], true);
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        temp.path().canonicalize().unwrap()
+    );
+    assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
+}
+
+#[test]
+fn doctor_keeps_an_explicit_workspace_root_exact() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let nested = temp.path().join("nested");
+    fs::create_dir(&nested).unwrap();
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .current_dir(&nested)
+            .args(["--json", "--workspace"])
+            .arg(&nested)
+            .arg("doctor"),
+    );
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], false);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        nested.canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn doctor_without_a_workspace_reports_the_current_directory_without_writing() {
+    let temp = TempDir::new().unwrap();
+    let before = tree_snapshot(temp.path());
+
+    let (code, value, stderr) = run_json(ewb().current_dir(temp.path()).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], false);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_eq!(value["data"]["workspace_check"]["error"], "not_initialized");
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        temp.path().canonicalize().unwrap()
+    );
+    assert_eq!(before, tree_snapshot(temp.path()));
+}
+
+#[test]
+fn doctor_stops_at_the_nearest_corrupt_workspace() {
+    let outer = TempDir::new().unwrap();
+    init(outer.path());
+    let inner = outer.path().join("inner");
+    fs::create_dir(&inner).unwrap();
+    init(&inner);
+    fs::write(inner.join(".ewb/WORKSPACE.json"), b"not JSON\n").unwrap();
+    let nested = inner.join("nested");
+    fs::create_dir(&nested).unwrap();
+
+    let (code, value, stderr) = run_json(ewb().current_dir(&nested).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], true);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_ne!(value["data"]["workspace_check"]["error"], Value::Null);
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        inner.canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn doctor_does_not_skip_a_nearer_wrong_type_state_entry() {
+    let outer = TempDir::new().unwrap();
+    init(outer.path());
+    let outer_before = tree_snapshot(&outer.path().join(".ewb"));
+    let inner = outer.path().join("inner");
+    let nested = inner.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(inner.join(".ewb"), b"not a workspace directory\n").unwrap();
+
+    let (code, value, stderr) = run_json(ewb().current_dir(&nested).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], false);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_eq!(value["data"]["workspace_check"]["error"], "not_initialized");
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        inner.canonicalize().unwrap()
+    );
+    assert_eq!(outer_before, tree_snapshot(&outer.path().join(".ewb")));
+    assert_eq!(
+        fs::read(inner.join(".ewb")).unwrap(),
+        b"not a workspace directory\n"
+    );
+}
+
+#[test]
+fn doctor_does_not_skip_a_nearer_dangling_state_link() {
+    let outer = TempDir::new().unwrap();
+    init(outer.path());
+    let outer_before = tree_snapshot(&outer.path().join(".ewb"));
+    let inner = outer.path().join("inner");
+    let nested = inner.join("nested");
+    let link_target = outer.path().join("removed state target");
+    fs::create_dir_all(&nested).unwrap();
+    fs::create_dir(&link_target).unwrap();
+    create_directory_link(&link_target, &inner.join(".ewb"));
+    fs::remove_dir(&link_target).unwrap();
+
+    let (code, value, stderr) = run_json(ewb().current_dir(&nested).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], false);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_eq!(value["data"]["workspace_check"]["error"], "not_initialized");
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        inner.canonicalize().unwrap()
+    );
+    assert_eq!(outer_before, tree_snapshot(&outer.path().join(".ewb")));
+    assert!(fs::symlink_metadata(inner.join(".ewb")).is_ok());
 }
 
 #[test]
@@ -1637,13 +1994,14 @@ fn oversized_native_output_is_interrupted_without_importing_capture() {
 
 #[test]
 fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
-    let temp = TempDir::new().unwrap();
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("concurrent workspace");
     let mut initializers = Vec::new();
     for _ in 0..8 {
         initializers.push(
             ProcessCommand::new(binary("ewb"))
                 .args(["--json", "--workspace"])
-                .arg(temp.path())
+                .arg(&root)
                 .arg("init")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1655,7 +2013,7 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
         assert!(child.wait_with_output().unwrap().status.success());
     }
 
-    let source = temp.path().join("concurrent.bin");
+    let source = root.join("concurrent.bin");
     let bytes = b"one immutable object, many records\0\xff";
     fs::write(&source, bytes).unwrap();
     let mut children = Vec::new();
@@ -1663,7 +2021,7 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
         children.push(
             ProcessCommand::new(binary("ewb"))
                 .args(["--json", "--workspace"])
-                .arg(temp.path())
+                .arg(&root)
                 .args(["artifacts", "add", "--file"])
                 .arg(&source)
                 .args(["--role", "concurrent_fixture"])
@@ -1694,13 +2052,8 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
     assert_eq!(ids.len(), 12);
     assert_eq!(digests.len(), 1);
     assert_eq!(
-        fs::read_dir(temp.path().join(".ewb/artifacts"))
-            .unwrap()
-            .count(),
+        fs::read_dir(root.join(".ewb/artifacts")).unwrap().count(),
         12
     );
-    assert_eq!(
-        fs::read_dir(temp.path().join(".ewb/tmp")).unwrap().count(),
-        0
-    );
+    assert_eq!(fs::read_dir(root.join(".ewb/tmp")).unwrap().count(), 0);
 }
