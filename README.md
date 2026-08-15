@@ -30,9 +30,13 @@ TomorrowCI is the only ready production adapter and remains qualification-gated.
 The canonical neutral integration boundary is the `ewb --json` envelope plus
 content-addressed exact artifacts and immutable plan/run IDs and digests. An
 IDE or other UI may consume those references, but remains optional and gains no
-authority. Multi-tool composition is not implemented yet; this boundary is the
-stable interchange surface, not a claim that a complete multi-tool carrier has
-landed.
+authority. The contract-only `audit-topology/v1` groups claimed exact plan
+references in a static acyclic predecessor graph, and `audit-receipt/v1` can
+carry a nonempty partial set of claimed exact plan/run references without a
+completeness or success claim. These portable objects do not add CLI commands,
+workspace registries, scheduling, execution, or workspace-aware verification;
+multi-tool composition is therefore not implemented yet. They are contract
+groundwork, not a claim that a complete multi-tool carrier has landed.
 
 StateWeaver's completed upstream candidate is recorded separately in a strict `candidate_pin/v1`: source commit `598753d182dda65c73a313e9efbf20b826942f0a`, payload-manifest SHA-256 `8c7c77d59d4cf3abdcadcce3f2d110ca085789da1ec14a2301245f3418b78bc3`, and candidate workflow run `31711437241`. At admission, all 113 listed checksums matched and the payload-manifest OIDC attestation verified. This is an integrity/provenance admission, not native authority.
 
@@ -390,6 +394,8 @@ credentials.
 - [`contracts/evidence-handoff-v1.schema.json`](contracts/evidence-handoff-v1.schema.json)
 - [`contracts/evidence-handoff-record-v1.schema.json`](contracts/evidence-handoff-record-v1.schema.json)
 - [`contracts/ide-handoff-v1.schema.json`](contracts/ide-handoff-v1.schema.json)
+- [`contracts/audit-topology-v1.schema.json`](contracts/audit-topology-v1.schema.json)
+- [`contracts/audit-receipt-v1.schema.json`](contracts/audit-receipt-v1.schema.json)
 
 The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or aggregate result field. A native projection carries its own namespace, value, `projection_only: true`, artifact ID, and exact locator. In `instrument_run/v1`, `native_authority` is schema-constrained to `not_reported`, and artifact `source_run_id` is constrained to `null` rather than asserting unverified lineage; either feature requires a new contract version with native rebinding rather than widening v1 in place.
 

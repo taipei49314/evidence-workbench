@@ -636,6 +636,48 @@ pub enum CapsuleReadinessState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct AuditTopology {
+    pub schema_version: String,
+    pub topology_id: String,
+    pub steps: Vec<AuditTopologyStep>,
+    pub authority_effect: ContractAuthorityEffect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AuditTopologyStep {
+    pub step_id: String,
+    pub plan_ref: PlanRecordRef,
+    pub predecessor_step_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AuditReceipt {
+    pub schema_version: String,
+    pub topology_ref: AuditTopologyRef,
+    pub recorded_runs: Vec<AuditRecordedRun>,
+    pub authority_effect: ContractAuthorityEffect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AuditTopologyRef {
+    pub topology_id: String,
+    /// SHA-256 over compact typed JSON for the referenced `audit-topology/v1` object.
+    pub topology_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AuditRecordedRun {
+    pub step_id: String,
+    pub plan_ref: PlanRecordRef,
+    pub run_ref: RunRecordRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct EvidenceHandoff {
     pub schema_version: String,
     pub handoff_id: String,

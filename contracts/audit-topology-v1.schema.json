@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench exact-plan audit topology v1",
+  "description": "Groups claimed exact EWB plan-record references into a static acyclic graph of declared predecessor relationships. Parsing does not prove plan existence, retention, review, temporal capture, or execution order. The contract does not copy plan subjects, select artifacts, interpret native results, prove lineage, or create an aggregate result or authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "topology_id", "steps", "authority_effect"],
+  "properties": {
+    "schema_version": { "const": "audit-topology/v1" },
+    "topology_id": {
+      "description": "Opaque typed identifier; not a content digest, result, or authenticity proof.",
+      "type": "string",
+      "pattern": "^topology_[0-9a-f]{32}$"
+    },
+    "steps": {
+      "description": "Canonical lexicographic step_id order. Array position has no execution or result meaning.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "authority_effect": { "const": "none" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "plan_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_id", "record_digest"],
+      "properties": {
+        "plan_id": { "type": "string", "pattern": "^plan_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "plan_ref", "predecessor_step_ids"],
+      "properties": {
+        "step_id": { "type": "string", "pattern": "^step_[0-9a-f]{32}$" },
+        "plan_ref": { "$ref": "#/$defs/plan_ref" },
+        "predecessor_step_ids": {
+          "description": "Canonical lexicographic ID order; only these IDs define graph edges.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^step_[0-9a-f]{32}$" }
+        }
+      }
+    }
+  }
+}

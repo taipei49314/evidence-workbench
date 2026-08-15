@@ -1,13 +1,14 @@
 use crate::contracts::{
-    CapsuleClosureState, CapsuleReadinessState, ContractArtifactRef, Digest, EvidenceHandoff,
-    IdeHandoff, PlatformAssumptionState, RuntimeCapsule, SubjectCandidate,
+    AuditReceipt, AuditTopology, CapsuleClosureState, CapsuleReadinessState, ContractArtifactRef,
+    Digest, EvidenceHandoff, IdeHandoff, PlanRecordRef, PlatformAssumptionState, RunRecordRef,
+    RuntimeCapsule, SubjectCandidate,
 };
 use crate::strict_json;
 use anyhow::{Context, Result, bail};
 use chrono::DateTime;
 use serde::de::DeserializeOwned;
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub fn parse_subject_candidate(bytes: &[u8]) -> Result<SubjectCandidate> {
     let candidate = parse_contract(bytes, "subject candidate")?;
@@ -31,6 +32,18 @@ pub fn parse_evidence_handoff(bytes: &[u8]) -> Result<EvidenceHandoff> {
     let handoff = parse_contract(bytes, "evidence handoff")?;
     validate_evidence_handoff(&handoff)?;
     Ok(handoff)
+}
+
+pub fn parse_audit_topology(bytes: &[u8]) -> Result<AuditTopology> {
+    let topology = parse_contract(bytes, "audit topology")?;
+    validate_audit_topology(&topology)?;
+    Ok(topology)
+}
+
+pub fn parse_audit_receipt(bytes: &[u8]) -> Result<AuditReceipt> {
+    let receipt = parse_contract(bytes, "audit receipt")?;
+    validate_audit_receipt(&receipt)?;
+    Ok(receipt)
 }
 
 pub fn parse_cli_envelope(bytes: &[u8]) -> Result<serde_json::Value> {
@@ -380,6 +393,184 @@ pub fn validate_evidence_handoff(handoff: &EvidenceHandoff) -> Result<()> {
     Ok(())
 }
 
+pub fn validate_audit_topology(topology: &AuditTopology) -> Result<()> {
+    if topology.schema_version != "audit-topology/v1" {
+        bail!("unsupported audit topology schema");
+    }
+    validate_prefixed_id(&topology.topology_id, "topology_", "audit topology id")?;
+    if topology.steps.is_empty() {
+        bail!("audit topology must contain at least one step");
+    }
+
+    let mut step_ids = BTreeSet::new();
+    let mut plan_ids = BTreeSet::new();
+    let mut previous_step_id = None;
+    for step in &topology.steps {
+        validate_prefixed_id(&step.step_id, "step_", "audit topology step id")?;
+        if previous_step_id.is_some_and(|previous| previous >= step.step_id.as_str()) {
+            bail!("audit topology steps must be ordered by unique step id");
+        }
+        previous_step_id = Some(step.step_id.as_str());
+        if !step_ids.insert(step.step_id.as_str()) {
+            bail!("audit topology step ids must be unique");
+        }
+        validate_plan_record_ref(&step.plan_ref, "audit topology plan")?;
+        if !plan_ids.insert(step.plan_ref.plan_id.as_str()) {
+            bail!("audit topology plan ids must be unique");
+        }
+
+        let mut predecessor_ids = BTreeSet::new();
+        let mut previous_predecessor_id = None;
+        for predecessor_id in &step.predecessor_step_ids {
+            validate_prefixed_id(
+                predecessor_id,
+                "step_",
+                "audit topology predecessor step id",
+            )?;
+            if predecessor_id == &step.step_id {
+                bail!("audit topology step cannot depend on itself");
+            }
+            if previous_predecessor_id.is_some_and(|previous| previous >= predecessor_id.as_str()) {
+                bail!("audit topology predecessor ids must be ordered and unique");
+            }
+            previous_predecessor_id = Some(predecessor_id.as_str());
+            if !predecessor_ids.insert(predecessor_id.as_str()) {
+                bail!("audit topology predecessor ids must be unique within a step");
+            }
+        }
+    }
+
+    for step in &topology.steps {
+        for predecessor_id in &step.predecessor_step_ids {
+            if !step_ids.contains(predecessor_id.as_str()) {
+                bail!("audit topology predecessor references an unknown step");
+            }
+        }
+    }
+
+    let mut in_degree = topology
+        .steps
+        .iter()
+        .map(|step| (step.step_id.clone(), step.predecessor_step_ids.len()))
+        .collect::<BTreeMap<_, _>>();
+    let mut successors = BTreeMap::<String, Vec<String>>::new();
+    for step in &topology.steps {
+        for predecessor_id in &step.predecessor_step_ids {
+            successors
+                .entry(predecessor_id.clone())
+                .or_default()
+                .push(step.step_id.clone());
+        }
+    }
+    let mut ready = in_degree
+        .iter()
+        .filter_map(|(step_id, degree)| (*degree == 0).then_some(step_id.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut visited = 0usize;
+    while let Some(step_id) = ready.pop_first() {
+        visited += 1;
+        if let Some(next_steps) = successors.get(&step_id) {
+            for next_step_id in next_steps {
+                let degree = in_degree
+                    .get_mut(next_step_id)
+                    .expect("validated successor must be a topology step");
+                *degree -= 1;
+                if *degree == 0 {
+                    ready.insert(next_step_id.clone());
+                }
+            }
+        }
+    }
+    if visited != topology.steps.len() {
+        bail!("audit topology predecessor graph must be acyclic");
+    }
+    Ok(())
+}
+
+pub fn validate_audit_receipt(receipt: &AuditReceipt) -> Result<()> {
+    if receipt.schema_version != "audit-receipt/v1" {
+        bail!("unsupported audit receipt schema");
+    }
+    validate_prefixed_id(
+        &receipt.topology_ref.topology_id,
+        "topology_",
+        "audit receipt topology id",
+    )?;
+    validate_sha256(
+        &receipt.topology_ref.topology_digest,
+        "audit receipt topology",
+    )?;
+    if receipt.recorded_runs.is_empty() {
+        bail!("audit receipt must reference at least one recorded run");
+    }
+
+    let mut step_ids = BTreeSet::new();
+    let mut plan_ids = BTreeSet::new();
+    let mut run_ids = BTreeSet::new();
+    let mut previous_step_id = None;
+    for recorded_run in &receipt.recorded_runs {
+        validate_prefixed_id(&recorded_run.step_id, "step_", "audit receipt step id")?;
+        if previous_step_id.is_some_and(|previous| previous >= recorded_run.step_id.as_str()) {
+            bail!("audit receipt recorded runs must be ordered by unique step id");
+        }
+        previous_step_id = Some(recorded_run.step_id.as_str());
+        if !step_ids.insert(recorded_run.step_id.as_str()) {
+            bail!("audit receipt step ids must be unique");
+        }
+        validate_plan_record_ref(&recorded_run.plan_ref, "audit receipt plan")?;
+        if !plan_ids.insert(recorded_run.plan_ref.plan_id.as_str()) {
+            bail!("audit receipt plan ids must be unique");
+        }
+        validate_run_record_ref(&recorded_run.run_ref, "audit receipt run")?;
+        if !run_ids.insert(recorded_run.run_ref.run_id.as_str()) {
+            bail!("audit receipt run ids must be unique");
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_audit_receipt_against_topology(
+    receipt: &AuditReceipt,
+    topology: &AuditTopology,
+) -> Result<()> {
+    validate_audit_topology(topology)?;
+    validate_audit_receipt(receipt)?;
+    if receipt.topology_ref.topology_id != topology.topology_id {
+        bail!("audit receipt topology id does not match the referenced topology");
+    }
+    let topology_bytes =
+        serde_json::to_vec(topology).context("serialize typed audit topology for digest")?;
+    let topology_digest = hex::encode(Sha256::digest(topology_bytes));
+    if receipt.topology_ref.topology_digest != topology_digest {
+        bail!("audit receipt topology digest does not match the referenced topology");
+    }
+
+    let topology_steps = topology
+        .steps
+        .iter()
+        .map(|step| (step.step_id.as_str(), step))
+        .collect::<BTreeMap<_, _>>();
+    for recorded_run in &receipt.recorded_runs {
+        let topology_step = topology_steps
+            .get(recorded_run.step_id.as_str())
+            .ok_or_else(|| anyhow::anyhow!("audit receipt references an unknown topology step"))?;
+        if recorded_run.plan_ref != topology_step.plan_ref {
+            bail!("audit receipt plan reference does not match its topology step");
+        }
+    }
+    Ok(())
+}
+
+fn validate_plan_record_ref(reference: &PlanRecordRef, label: &str) -> Result<()> {
+    validate_prefixed_id(&reference.plan_id, "plan_", &format!("{label} id"))?;
+    validate_sha256(&reference.record_digest, label)
+}
+
+fn validate_run_record_ref(reference: &RunRecordRef, label: &str) -> Result<()> {
+    validate_prefixed_id(&reference.run_id, "run_", &format!("{label} id"))?;
+    validate_sha256(&reference.record_digest, label)
+}
+
 fn validate_contract_artifact_ref(reference: &ContractArtifactRef, label: &str) -> Result<()> {
     validate_artifact_id(&reference.artifact_id)?;
     validate_digest(&reference.digest, label)
@@ -569,6 +760,10 @@ mod tests {
         include_bytes!("../contracts/examples/evidence-handoff-v1.example.json");
     const EVIDENCE_HANDOFF_RECORD_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/evidence-handoff-record-v1.example.json");
+    const AUDIT_TOPOLOGY_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/audit-topology-v1.example.json");
+    const AUDIT_RECEIPT_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/audit-receipt-v1.example.json");
     const CLI_SUCCESS_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/ewb-cli-envelope-v1.success.example.json");
     const CLI_FAILURE_EXAMPLE: &[u8] =
@@ -590,6 +785,12 @@ mod tests {
             record.record_digest,
             crate::workspace::digest_serialized(&record.handoff).unwrap()
         );
+        let topology =
+            parse_audit_topology(AUDIT_TOPOLOGY_EXAMPLE).expect("valid audit topology example");
+        let receipt =
+            parse_audit_receipt(AUDIT_RECEIPT_EXAMPLE).expect("valid audit receipt example");
+        validate_audit_receipt_against_topology(&receipt, &topology)
+            .expect("audit receipt example matches its exact topology");
         parse_cli_envelope(CLI_SUCCESS_EXAMPLE).expect("valid CLI success envelope example");
         parse_cli_envelope(CLI_FAILURE_EXAMPLE).expect("valid CLI failure envelope example");
     }
@@ -829,6 +1030,383 @@ mod tests {
     }
 
     #[test]
+    fn audit_topology_is_an_exact_plan_dag_without_policy_or_results() {
+        let parsed = parse_audit_topology(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        assert_eq!(
+            parsed.authority_effect,
+            crate::contracts::ContractAuthorityEffect::None
+        );
+
+        for forbidden in [
+            "aggregate_overall",
+            "overall",
+            "overall_status",
+            "pass",
+            "fail",
+            "passed",
+            "status",
+            "outcome",
+            "verdict",
+            "score",
+            "rank",
+            "trust",
+            "certification",
+            "success",
+            "completed",
+            "ready",
+            "native_result",
+            "native_authority",
+            "authority",
+            "command",
+            "argv",
+            "parameters",
+            "capabilities",
+            "condition",
+            "when",
+            "on_success",
+            "on_failure",
+            "retry",
+            "subject",
+            "artifact_role",
+            "artifact_ref",
+            "handoff_ref",
+            "source_run_ref",
+            "dependency_artifact",
+            "required",
+            "optional",
+        ] {
+            let mut topology: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+            topology[forbidden] = json!("forbidden");
+            assert!(
+                parse_audit_topology(&serde_json::to_vec(&topology).unwrap()).is_err(),
+                "accepted forbidden topology field {forbidden}"
+            );
+
+            let mut nested: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+            nested["steps"][0][forbidden] = json!("forbidden");
+            assert!(
+                parse_audit_topology(&serde_json::to_vec(&nested).unwrap()).is_err(),
+                "accepted forbidden topology step field {forbidden}"
+            );
+        }
+
+        for (pointer, replacement) in [
+            ("/schema_version", json!("audit-topology/v2")),
+            ("/topology_id", json!("topology_NOT_LOWER_HEX")),
+            ("/steps/0/step_id", json!("overall_pass")),
+            (
+                "/steps/0/plan_ref/plan_id",
+                json!("run_11111111111111111111111111111111"),
+            ),
+            ("/steps/0/plan_ref/record_digest", json!("11")),
+            ("/authority_effect", json!("reported")),
+        ] {
+            let mut topology: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+            *topology.pointer_mut(pointer).unwrap() = replacement;
+            assert!(
+                parse_audit_topology(&serde_json::to_vec(&topology).unwrap()).is_err(),
+                "accepted invalid topology field {pointer}"
+            );
+        }
+
+        let mut empty: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        empty["steps"] = json!([]);
+        assert!(parse_audit_topology(&serde_json::to_vec(&empty).unwrap()).is_err());
+
+        let mut duplicate_step: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        let first_step = duplicate_step["steps"][0].clone();
+        duplicate_step["steps"]
+            .as_array_mut()
+            .unwrap()
+            .push(first_step);
+        assert!(parse_audit_topology(&serde_json::to_vec(&duplicate_step).unwrap()).is_err());
+
+        let mut duplicate_plan: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        let first_plan = duplicate_plan["steps"][0]["plan_ref"].clone();
+        duplicate_plan["steps"][1]["plan_ref"] = first_plan;
+        assert!(parse_audit_topology(&serde_json::to_vec(&duplicate_plan).unwrap()).is_err());
+
+        let mut unordered_steps: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        unordered_steps["steps"].as_array_mut().unwrap().swap(0, 1);
+        assert!(parse_audit_topology(&serde_json::to_vec(&unordered_steps).unwrap()).is_err());
+
+        let mut unknown_predecessor: Value =
+            serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        unknown_predecessor["steps"][1]["predecessor_step_ids"] =
+            json!(["step_ffffffffffffffffffffffffffffffff"]);
+        assert!(parse_audit_topology(&serde_json::to_vec(&unknown_predecessor).unwrap()).is_err());
+
+        let mut self_predecessor: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        self_predecessor["steps"][1]["predecessor_step_ids"] =
+            json!(["step_22222222222222222222222222222222"]);
+        assert!(parse_audit_topology(&serde_json::to_vec(&self_predecessor).unwrap()).is_err());
+
+        let mut duplicate_predecessor: Value =
+            serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        duplicate_predecessor["steps"][2]["predecessor_step_ids"] = json!([
+            "step_11111111111111111111111111111111",
+            "step_11111111111111111111111111111111"
+        ]);
+        assert!(
+            parse_audit_topology(&serde_json::to_vec(&duplicate_predecessor).unwrap()).is_err()
+        );
+
+        let mut unordered_predecessors: Value =
+            serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        unordered_predecessors["steps"][2]["predecessor_step_ids"] = json!([
+            "step_22222222222222222222222222222222",
+            "step_11111111111111111111111111111111"
+        ]);
+        assert!(
+            parse_audit_topology(&serde_json::to_vec(&unordered_predecessors).unwrap()).is_err()
+        );
+
+        let mut disconnected_cycle: Value = serde_json::from_slice(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        disconnected_cycle["steps"][1]["predecessor_step_ids"] =
+            json!(["step_33333333333333333333333333333333"]);
+        disconnected_cycle["steps"][2]["predecessor_step_ids"] =
+            json!(["step_22222222222222222222222222222222"]);
+        assert!(parse_audit_topology(&serde_json::to_vec(&disconnected_cycle).unwrap()).is_err());
+
+        let duplicate_key = String::from_utf8(AUDIT_TOPOLOGY_EXAMPLE.to_vec())
+            .unwrap()
+            .replacen(
+                "\"schema_version\": \"audit-topology/v1\"",
+                "\"schema_version\": \"audit-topology/v1\", \"schema_version\": \"audit-topology/v1\"",
+                1,
+            );
+        assert!(parse_audit_topology(duplicate_key.as_bytes()).is_err());
+        let mut trailing = AUDIT_TOPOLOGY_EXAMPLE.to_vec();
+        trailing.extend_from_slice(b" {}");
+        assert!(parse_audit_topology(&trailing).is_err());
+    }
+
+    #[test]
+    fn audit_receipt_is_a_non_authoritative_partial_exact_reference_set() {
+        let topology = parse_audit_topology(AUDIT_TOPOLOGY_EXAMPLE).unwrap();
+        let receipt = parse_audit_receipt(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        validate_audit_receipt_against_topology(&receipt, &topology).unwrap();
+        assert_eq!(
+            receipt.authority_effect,
+            crate::contracts::ContractAuthorityEffect::None
+        );
+
+        // A receipt may reference a run whose own termination is timed_out or
+        // spawn_error. That fact stays in the run record and cannot become a
+        // success, failure, or copied termination field here.
+        for forbidden in [
+            "aggregate_overall",
+            "overall",
+            "overall_status",
+            "pass",
+            "fail",
+            "passed",
+            "status",
+            "outcome",
+            "verdict",
+            "score",
+            "rank",
+            "trust",
+            "certification",
+            "success",
+            "completed",
+            "ready",
+            "termination",
+            "native_result",
+            "native_authority",
+            "authority",
+            "command",
+            "argv",
+            "parameters",
+            "capabilities",
+            "condition",
+            "when",
+            "on_success",
+            "on_failure",
+            "retry",
+            "subject",
+            "artifact_role",
+            "artifact_ref",
+            "handoff_ref",
+            "required",
+            "optional",
+        ] {
+            let mut receipt: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+            receipt[forbidden] = json!("forbidden");
+            assert!(
+                parse_audit_receipt(&serde_json::to_vec(&receipt).unwrap()).is_err(),
+                "accepted forbidden receipt field {forbidden}"
+            );
+
+            let mut nested: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+            nested["recorded_runs"][0][forbidden] = json!("forbidden");
+            assert!(
+                parse_audit_receipt(&serde_json::to_vec(&nested).unwrap()).is_err(),
+                "accepted forbidden recorded-run field {forbidden}"
+            );
+        }
+
+        for (pointer, replacement) in [
+            ("/schema_version", json!("audit-receipt/v2")),
+            ("/topology_ref/topology_id", json!("topology_NOT_LOWER_HEX")),
+            ("/topology_ref/topology_digest", json!("00")),
+            ("/recorded_runs/0/step_id", json!("overall_pass")),
+            (
+                "/recorded_runs/0/plan_ref/plan_id",
+                json!("run_11111111111111111111111111111111"),
+            ),
+            ("/recorded_runs/0/plan_ref/record_digest", json!("11")),
+            (
+                "/recorded_runs/0/run_ref/run_id",
+                json!("plan_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            ),
+            ("/recorded_runs/0/run_ref/record_digest", json!("aa")),
+            ("/authority_effect", json!("reported")),
+        ] {
+            let mut receipt: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+            *receipt.pointer_mut(pointer).unwrap() = replacement;
+            assert!(
+                parse_audit_receipt(&serde_json::to_vec(&receipt).unwrap()).is_err(),
+                "accepted invalid receipt field {pointer}"
+            );
+        }
+
+        let mut empty: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        empty["recorded_runs"] = json!([]);
+        assert!(parse_audit_receipt(&serde_json::to_vec(&empty).unwrap()).is_err());
+
+        let mut duplicate_step: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        let first_run = duplicate_step["recorded_runs"][0].clone();
+        duplicate_step["recorded_runs"]
+            .as_array_mut()
+            .unwrap()
+            .push(first_run);
+        assert!(parse_audit_receipt(&serde_json::to_vec(&duplicate_step).unwrap()).is_err());
+
+        let mut duplicate_plan: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        let first_plan = duplicate_plan["recorded_runs"][0]["plan_ref"].clone();
+        duplicate_plan["recorded_runs"][1]["plan_ref"] = first_plan;
+        assert!(parse_audit_receipt(&serde_json::to_vec(&duplicate_plan).unwrap()).is_err());
+
+        let mut duplicate_run: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        let first_run = duplicate_run["recorded_runs"][0]["run_ref"].clone();
+        duplicate_run["recorded_runs"][1]["run_ref"] = first_run;
+        assert!(parse_audit_receipt(&serde_json::to_vec(&duplicate_run).unwrap()).is_err());
+
+        let mut unordered: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        unordered["recorded_runs"]
+            .as_array_mut()
+            .unwrap()
+            .swap(0, 1);
+        assert!(parse_audit_receipt(&serde_json::to_vec(&unordered).unwrap()).is_err());
+
+        let mut partial: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        partial["recorded_runs"] = json!([{
+            "step_id": "step_33333333333333333333333333333333",
+            "plan_ref": {
+                "plan_id": "plan_33333333333333333333333333333333",
+                "record_digest": "3333333333333333333333333333333333333333333333333333333333333333"
+            },
+            "run_ref": {
+                "run_id": "run_cccccccccccccccccccccccccccccccc",
+                "record_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+        }]);
+        let partial = parse_audit_receipt(&serde_json::to_vec(&partial).unwrap()).unwrap();
+        validate_audit_receipt_against_topology(&partial, &topology)
+            .expect("a receipt subset need not copy predecessor runs");
+
+        let mut unknown_step: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        unknown_step["recorded_runs"][1]["step_id"] =
+            json!("step_ffffffffffffffffffffffffffffffff");
+        let unknown_step =
+            parse_audit_receipt(&serde_json::to_vec(&unknown_step).unwrap()).unwrap();
+        assert!(validate_audit_receipt_against_topology(&unknown_step, &topology).is_err());
+
+        let mut wrong_plan: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        wrong_plan["recorded_runs"][1]["plan_ref"]["record_digest"] =
+            json!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+        let wrong_plan = parse_audit_receipt(&serde_json::to_vec(&wrong_plan).unwrap()).unwrap();
+        assert!(validate_audit_receipt_against_topology(&wrong_plan, &topology).is_err());
+
+        let mut wrong_topology_id: Value = serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        wrong_topology_id["topology_ref"]["topology_id"] =
+            json!("topology_ffffffffffffffffffffffffffffffff");
+        let wrong_topology_id =
+            parse_audit_receipt(&serde_json::to_vec(&wrong_topology_id).unwrap()).unwrap();
+        assert!(validate_audit_receipt_against_topology(&wrong_topology_id, &topology).is_err());
+
+        let mut wrong_topology_digest: Value =
+            serde_json::from_slice(AUDIT_RECEIPT_EXAMPLE).unwrap();
+        wrong_topology_digest["topology_ref"]["topology_digest"] =
+            json!("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        let wrong_topology_digest =
+            parse_audit_receipt(&serde_json::to_vec(&wrong_topology_digest).unwrap()).unwrap();
+        assert!(
+            validate_audit_receipt_against_topology(&wrong_topology_digest, &topology).is_err()
+        );
+
+        let duplicate_key = String::from_utf8(AUDIT_RECEIPT_EXAMPLE.to_vec())
+            .unwrap()
+            .replacen(
+                "\"schema_version\": \"audit-receipt/v1\"",
+                "\"schema_version\": \"audit-receipt/v1\", \"schema_version\": \"audit-receipt/v1\"",
+                1,
+            );
+        assert!(parse_audit_receipt(duplicate_key.as_bytes()).is_err());
+        let mut trailing = AUDIT_RECEIPT_EXAMPLE.to_vec();
+        trailing.extend_from_slice(b" {}");
+        assert!(parse_audit_receipt(&trailing).is_err());
+    }
+
+    #[test]
+    fn audit_receipt_does_not_promote_a_spawn_error_run_into_a_result() {
+        let run: crate::contracts::InstrumentRun = serde_json::from_slice(include_bytes!(
+            "../contracts/examples/instrument-run-v1.example.json"
+        ))
+        .unwrap();
+        assert!(matches!(
+            &run.termination,
+            crate::contracts::Termination::SpawnError { .. }
+        ));
+
+        let topology = crate::contracts::AuditTopology {
+            schema_version: "audit-topology/v1".to_owned(),
+            topology_id: "topology_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_owned(),
+            steps: vec![crate::contracts::AuditTopologyStep {
+                step_id: "step_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_owned(),
+                plan_ref: run.source_plan_ref.clone(),
+                predecessor_step_ids: Vec::new(),
+            }],
+            authority_effect: crate::contracts::ContractAuthorityEffect::None,
+        };
+        validate_audit_topology(&topology).unwrap();
+        let topology_digest = crate::workspace::digest_serialized(&topology).unwrap();
+        let receipt = crate::contracts::AuditReceipt {
+            schema_version: "audit-receipt/v1".to_owned(),
+            topology_ref: crate::contracts::AuditTopologyRef {
+                topology_id: topology.topology_id.clone(),
+                topology_digest,
+            },
+            recorded_runs: vec![crate::contracts::AuditRecordedRun {
+                step_id: topology.steps[0].step_id.clone(),
+                plan_ref: run.source_plan_ref.clone(),
+                run_ref: crate::contracts::RunRecordRef {
+                    run_id: run.run_id.clone(),
+                    record_digest: crate::workspace::digest_serialized(&run).unwrap(),
+                },
+            }],
+            authority_effect: crate::contracts::ContractAuthorityEffect::None,
+        };
+        validate_audit_receipt_against_topology(&receipt, &topology).unwrap();
+
+        let receipt_value = serde_json::to_value(receipt).unwrap();
+        assert!(receipt_value.get("termination").is_none());
+        assert!(receipt_value.get("success").is_none());
+        assert!(receipt_value.get("verdict").is_none());
+    }
+
+    #[test]
     fn every_new_schema_closes_all_object_shapes() {
         for raw in [
             include_str!("../contracts/subject-candidate-v1.schema.json"),
@@ -837,6 +1415,8 @@ mod tests {
             include_str!("../contracts/ide-handoff-v1.schema.json"),
             include_str!("../contracts/evidence-handoff-v1.schema.json"),
             include_str!("../contracts/evidence-handoff-record-v1.schema.json"),
+            include_str!("../contracts/audit-topology-v1.schema.json"),
+            include_str!("../contracts/audit-receipt-v1.schema.json"),
             include_str!("../contracts/build-identity-v1.schema.json"),
             include_str!("../contracts/ewb-cli-envelope-v1.schema.json"),
         ] {
