@@ -1,7 +1,7 @@
 use crate::contracts::{
     ArtifactCapture, ArtifactDescriptor, ArtifactRecord, ArtifactStorage, Digest,
-    NativeDeliveryQualificationRecord, PlanPayload, PlanRecord, RunRecord, RuntimeCapsuleRecord,
-    SubjectCandidateRecord,
+    EvidenceHandoffRecord, NativeDeliveryQualificationRecord, PlanPayload, PlanRecord, RunRecord,
+    RuntimeCapsuleRecord, SubjectCandidateRecord,
 };
 use crate::run_validation;
 use crate::strict_json;
@@ -65,6 +65,7 @@ impl Workspace {
             "capsules",
             "candidates",
             "qualifications",
+            "handoffs",
         ] {
             ensure_real_dir(&workspace.state.join(name))?;
         }
@@ -152,6 +153,7 @@ impl Workspace {
             "capsules",
             "candidates",
             "qualifications",
+            "handoffs",
         ] {
             validate_real_dir(&self.state.join(name))?;
         }
@@ -301,6 +303,41 @@ impl Workspace {
         }
         records.sort_by(|left, right| left.run.started_at.cmp(&right.run.started_at));
         Ok(records)
+    }
+
+    pub(crate) fn write_evidence_handoff(&self, record: &EvidenceHandoffRecord) -> Result<()> {
+        validate_prefixed_id(&record.handoff.handoff_id, "handoff_")?;
+        if record.schema_version != "evidence_handoff_record/v1"
+            || digest_serialized(&record.handoff)? != record.record_digest
+        {
+            bail!("evidence handoff record identity or digest mismatch");
+        }
+        crate::data_contract_validation::validate_evidence_handoff(&record.handoff)?;
+        let path = self
+            .state
+            .join("handoffs")
+            .join(format!("{}.json", record.handoff.handoff_id));
+        self.write_json_atomic(&path, record, true)
+    }
+
+    pub(crate) fn load_evidence_handoff(&self, handoff_id: &str) -> Result<EvidenceHandoffRecord> {
+        validate_prefixed_id(handoff_id, "handoff_")?;
+        let path = self
+            .state
+            .join("handoffs")
+            .join(format!("{handoff_id}.json"));
+        let record: EvidenceHandoffRecord = read_strict_json(&path)?;
+        if record.schema_version != "evidence_handoff_record/v1"
+            || record.handoff.handoff_id != handoff_id
+            || digest_serialized(&record.handoff)? != record.record_digest
+        {
+            bail!("evidence handoff record identity or digest mismatch");
+        }
+        Ok(record)
+    }
+
+    pub(crate) fn evidence_handoff_ids(&self) -> Result<Vec<String>> {
+        registry_record_ids(&self.state.join("handoffs"), "handoff_", "evidence handoff")
     }
 
     pub fn write_runtime_capsule(&self, record: &RuntimeCapsuleRecord) -> Result<()> {
@@ -555,6 +592,7 @@ impl Workspace {
     pub fn verify_descriptor(&self, descriptor: &ArtifactDescriptor) -> Result<PathBuf> {
         run_validation::validate_artifact_descriptor(descriptor)?;
         let path = self.object_path(&descriptor.digest.value)?;
+        self.validate_object_storage_path(&path)?;
         let metadata = fs::symlink_metadata(&path).context("artifact object is missing")?;
         if !metadata.is_file() || is_reparse(&metadata) {
             bail!("artifact object is not a regular non-link file");
@@ -574,8 +612,25 @@ impl Workspace {
     pub fn read_verified_descriptor(&self, descriptor: &ArtifactDescriptor) -> Result<Vec<u8>> {
         run_validation::validate_artifact_descriptor(descriptor)?;
         let path = self.object_path(&descriptor.digest.value)?;
+        self.validate_object_storage_path(&path)?;
         read_verified_file(&path, &descriptor.digest.value, descriptor.byte_length)
             .with_context(|| format!("cannot read verified artifact object {}", path.display()))
+    }
+
+    fn validate_object_storage_path(&self, object_path: &Path) -> Result<()> {
+        validate_real_dir(&self.state)?;
+        let objects = self.state.join("objects");
+        validate_real_dir(&objects)?;
+        let algorithm = objects.join("sha256");
+        validate_real_dir(&algorithm)?;
+        let shard = object_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("artifact object path has no shard directory"))?;
+        if shard.parent() != Some(algorithm.as_path()) {
+            bail!("artifact object path is outside the workspace CAS shard layout");
+        }
+        validate_real_dir(shard)?;
+        Ok(())
     }
 
     pub fn object_path(&self, digest: &str) -> Result<PathBuf> {
@@ -886,6 +941,10 @@ pub fn new_plan_id() -> String {
 
 pub fn new_run_id() -> String {
     format!("run_{}", Uuid::new_v4().simple())
+}
+
+pub fn new_handoff_id() -> String {
+    format!("handoff_{}", Uuid::new_v4().simple())
 }
 
 pub fn validate_prefixed_id(value: &str, prefix: &str) -> Result<()> {

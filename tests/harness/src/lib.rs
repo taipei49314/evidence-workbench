@@ -9,6 +9,8 @@ pub mod cli;
 pub mod contracts;
 #[path = "../../../src/data_contract_validation.rs"]
 pub mod data_contract_validation;
+#[path = "../../../src/evidence_handoffs.rs"]
+pub mod evidence_handoffs;
 #[path = "../../../src/git_subject.rs"]
 pub mod git_subject;
 #[path = "manifests.rs"]

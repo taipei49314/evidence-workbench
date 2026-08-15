@@ -1,0 +1,24 @@
+{
+  "schema_version": "evidence_handoff_record/v1",
+  "record_digest": "d39509850daf89cfc8b04dbcea3249513e5594c85397b048410c2d9c907e7087",
+  "handoff": {
+    "schema_version": "evidence-handoff/v1",
+    "handoff_id": "handoff_00000000000000000000000000000000",
+    "created_at": "2026-08-15T00:00:00Z",
+    "producer_plan_ref": {
+      "plan_id": "plan_11111111111111111111111111111111",
+      "record_digest": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "producer_run_ref": {
+      "run_id": "run_22222222222222222222222222222222",
+      "record_digest": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "artifact_ref": {
+      "artifact_id": "artifact_33333333333333333333333333333333",
+      "record_digest": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "relationship": "captured_run_artifact",
+    "consumer_treatment": "untrusted_exact_bytes",
+    "authority_effect": "none"
+  }
+}

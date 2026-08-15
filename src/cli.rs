@@ -2,8 +2,8 @@ use crate::contracts::{
     ArtifactDescriptor, PlanPayload, PlanRecordRef, Subject, ToolRef, UpstreamPinRef,
 };
 use crate::{
-    build_identity, candidate_pins, git_subject, manifests, native, native_qualifications,
-    runtime_capsules, subject_candidates, upstream_pins, workspace,
+    build_identity, candidate_pins, evidence_handoffs, git_subject, manifests, native,
+    native_qualifications, runtime_capsules, subject_candidates, upstream_pins, workspace,
 };
 use anyhow::{Context, Result, bail};
 use chrono::{SecondsFormat, Utc};
@@ -56,6 +56,8 @@ pub enum Command {
     Runs(RunsCommand),
     /// Import and verify exact-byte artifacts.
     Artifacts(ArtifactsCommand),
+    /// Create and re-verify exact-record evidence handoffs without widening authority.
+    Handoffs(HandoffsCommand),
 }
 
 #[derive(Debug, Args)]
@@ -273,6 +275,36 @@ pub enum ArtifactsSubcommand {
     Verify { artifact_id: String },
 }
 
+#[derive(Debug, Args)]
+pub struct HandoffsCommand {
+    #[command(subcommand)]
+    pub command: HandoffsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HandoffsSubcommand {
+    /// Bind one retained producer run to one exact artifact captured by that run.
+    Create {
+        #[arg(long, value_name = "RUN_ID")]
+        source_run: String,
+        /// Exact digest retained when the producer run was created.
+        #[arg(long, value_name = "SHA256")]
+        source_run_digest: String,
+        #[arg(long, value_name = "ARTIFACT_ID")]
+        artifact: String,
+    },
+    /// List every handoff after re-verifying its complete workspace lineage.
+    List,
+    /// Show one complete handoff record after re-verifying its workspace lineage.
+    Show { handoff_id: String },
+    /// Re-verify lineage against the exact digest retained for this handoff.
+    Verify {
+        handoff_id: String,
+        #[arg(long, value_name = "SHA256")]
+        handoff_digest: String,
+    },
+}
+
 #[derive(Debug)]
 pub struct CommandOutcome {
     pub command: &'static str,
@@ -293,6 +325,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
         Command::Plans(command) => plans(cli, command),
         Command::Runs(command) => runs(cli, command),
         Command::Artifacts(command) => artifacts(cli, command),
+        Command::Handoffs(command) => handoffs(cli, command),
     }
 }
 
@@ -809,6 +842,44 @@ fn artifacts(cli: &Cli, command: &ArtifactsCommand) -> Result<CommandOutcome> {
                 }),
             )
         }
+    }
+}
+
+fn handoffs(cli: &Cli, command: &HandoffsCommand) -> Result<CommandOutcome> {
+    let workspace = open_workspace(cli)?;
+    match &command.command {
+        HandoffsSubcommand::Create {
+            source_run,
+            source_run_digest,
+            artifact,
+        } => success(
+            "handoffs.create",
+            serde_json::to_value(evidence_handoffs::create(
+                &workspace,
+                source_run,
+                source_run_digest,
+                artifact,
+            )?)?,
+        ),
+        HandoffsSubcommand::List => success(
+            "handoffs.list",
+            serde_json::to_value(evidence_handoffs::list_verified(&workspace)?)?,
+        ),
+        HandoffsSubcommand::Show { handoff_id } => success(
+            "handoffs.show",
+            serde_json::to_value(evidence_handoffs::load_verified(&workspace, handoff_id)?)?,
+        ),
+        HandoffsSubcommand::Verify {
+            handoff_id,
+            handoff_digest,
+        } => success(
+            "handoffs.verify",
+            serde_json::to_value(evidence_handoffs::verify(
+                &workspace,
+                handoff_id,
+                handoff_digest,
+            )?)?,
+        ),
     }
 }
 

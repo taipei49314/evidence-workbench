@@ -8,6 +8,7 @@ use crate::manifests;
 use crate::workspace::{self, Workspace};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::fs;
 use tempfile::TempDir;
 
@@ -379,4 +380,403 @@ fn write_run_rebinds_tool_reference_to_the_embedded_manifest() {
 
     let error = workspace.write_run(run).unwrap_err().to_string();
     assert!(error.contains("exact embedded manifest"));
+}
+
+#[test]
+fn evidence_handoff_registry_roundtrips_complete_neutral_records() {
+    let temp = TempDir::new().unwrap();
+    let (workspace, run) = valid_run(&temp);
+    let run_record = workspace.write_run(run).unwrap();
+    let artifact_id = run_record.run.artifacts[0].artifact_id.clone();
+    let artifact_record = workspace.load_artifact(&artifact_id).unwrap();
+
+    let first = crate::evidence_handoffs::create(
+        &workspace,
+        &run_record.run.run_id,
+        &run_record.record_digest,
+        &artifact_id,
+    )
+    .unwrap();
+
+    assert_eq!(first.schema_version, "evidence_handoff_record/v1");
+    assert_eq!(
+        first.record_digest,
+        workspace::digest_serialized(&first.handoff).unwrap()
+    );
+    assert_eq!(first.handoff.schema_version, "evidence-handoff/v1");
+    assert_eq!(
+        first.handoff.producer_plan_ref,
+        run_record.run.source_plan_ref
+    );
+    assert_eq!(first.handoff.producer_run_ref.run_id, run_record.run.run_id);
+    assert_eq!(
+        first.handoff.producer_run_ref.record_digest,
+        run_record.record_digest
+    );
+    assert_eq!(first.handoff.artifact_ref.artifact_id, artifact_id);
+    assert_eq!(
+        first.handoff.artifact_ref.record_digest,
+        artifact_record.record_digest
+    );
+    assert_eq!(
+        first.handoff.relationship,
+        crate::contracts::EvidenceHandoffRelationship::CapturedRunArtifact
+    );
+    assert_eq!(
+        first.handoff.consumer_treatment,
+        crate::contracts::EvidenceConsumerTreatment::UntrustedExactBytes
+    );
+    assert_eq!(
+        first.handoff.authority_effect,
+        crate::contracts::ContractAuthorityEffect::None
+    );
+
+    let value = serde_json::to_value(&first).unwrap();
+    assert_eq!(
+        value.as_object().unwrap().keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        BTreeSet::from(["handoff", "record_digest", "schema_version"])
+    );
+    assert_eq!(
+        value["handoff"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "artifact_ref",
+            "authority_effect",
+            "consumer_treatment",
+            "created_at",
+            "handoff_id",
+            "producer_plan_ref",
+            "producer_run_ref",
+            "relationship",
+            "schema_version",
+        ])
+    );
+
+    assert_eq!(
+        crate::evidence_handoffs::load_verified(&workspace, &first.handoff.handoff_id).unwrap(),
+        first
+    );
+    assert_eq!(
+        crate::evidence_handoffs::verify(
+            &workspace,
+            &first.handoff.handoff_id,
+            &first.record_digest,
+        )
+        .unwrap(),
+        first
+    );
+    assert!(
+        crate::evidence_handoffs::verify(
+            &workspace,
+            &first.handoff.handoff_id,
+            &"ff".repeat(32),
+        )
+        .is_err()
+    );
+
+    let original_bytes = fs::read(
+        workspace
+            .state
+            .join("handoffs")
+            .join(format!("{}.json", first.handoff.handoff_id)),
+    )
+    .unwrap();
+    assert!(workspace.write_evidence_handoff(&first).is_err());
+    assert_eq!(
+        fs::read(
+            workspace
+                .state
+                .join("handoffs")
+                .join(format!("{}.json", first.handoff.handoff_id))
+        )
+        .unwrap(),
+        original_bytes
+    );
+
+    let second = crate::evidence_handoffs::create(
+        &workspace,
+        &run_record.run.run_id,
+        &run_record.record_digest,
+        &artifact_id,
+    )
+    .unwrap();
+    let listed = crate::evidence_handoffs::list_verified(&workspace).unwrap();
+    let listed_ids = listed
+        .iter()
+        .map(|record| record.handoff.handoff_id.as_str())
+        .collect::<Vec<_>>();
+    let mut sorted_ids = vec![
+        first.handoff.handoff_id.as_str(),
+        second.handoff.handoff_id.as_str(),
+    ];
+    sorted_ids.sort();
+    assert_eq!(listed_ids, sorted_ids);
+}
+
+#[test]
+fn evidence_handoff_create_rejects_unretained_or_unrelated_inputs_without_writing() {
+    let temp = TempDir::new().unwrap();
+    let (workspace, run) = valid_run(&temp);
+    let run_record = workspace.write_run(run).unwrap();
+    let artifact_id = run_record.run.artifacts[0].artifact_id.clone();
+    let unrelated_source = temp.path().join("unrelated.json");
+    fs::write(&unrelated_source, br#"{"status":"inspected"}"#).unwrap();
+    let unrelated = workspace
+        .import_artifact(
+            &unrelated_source,
+            vec!["native_stdout".to_owned()],
+            "application/json".to_owned(),
+            "process_stdout",
+            "raw_stream_capture",
+        )
+        .unwrap();
+
+    let wrong_digest = crate::evidence_handoffs::create(
+        &workspace,
+        &run_record.run.run_id,
+        &"ff".repeat(32),
+        &artifact_id,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(wrong_digest.contains("retained producer run record"));
+
+    let missing_run = crate::evidence_handoffs::create(
+        &workspace,
+        &format!("run_{}", "ff".repeat(16)),
+        &"ff".repeat(32),
+        &artifact_id,
+    );
+    assert!(missing_run.is_err());
+
+    let unrelated_error = crate::evidence_handoffs::create(
+        &workspace,
+        &run_record.run.run_id,
+        &run_record.record_digest,
+        &unrelated.artifact_id,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(unrelated_error.contains("not captured by the producer run"));
+    assert_eq!(fs::read_dir(workspace.state.join("handoffs")).unwrap().count(), 0);
+}
+
+#[test]
+fn evidence_handoff_reads_reject_rewritten_references_even_with_a_new_wrapper_digest() {
+    let temp = TempDir::new().unwrap();
+    let (workspace, run) = valid_run(&temp);
+    let run_record = workspace.write_run(run).unwrap();
+    let artifact_id = run_record.run.artifacts[0].artifact_id.clone();
+    let record = crate::evidence_handoffs::create(
+        &workspace,
+        &run_record.run.run_id,
+        &run_record.record_digest,
+        &artifact_id,
+    )
+    .unwrap();
+    let record_path = workspace
+        .state
+        .join("handoffs")
+        .join(format!("{}.json", record.handoff.handoff_id));
+    let pristine = fs::read(&record_path).unwrap();
+
+    for mutation in ["run", "plan", "artifact"] {
+        let mut forged = record.clone();
+        match mutation {
+            "run" => forged.handoff.producer_run_ref.record_digest = "aa".repeat(32),
+            "plan" => forged.handoff.producer_plan_ref.record_digest = "bb".repeat(32),
+            "artifact" => forged.handoff.artifact_ref.record_digest = "cc".repeat(32),
+            _ => unreachable!(),
+        }
+        forged.record_digest = workspace::digest_serialized(&forged.handoff).unwrap();
+        fs::write(&record_path, serde_json::to_vec_pretty(&forged).unwrap()).unwrap();
+
+        assert!(
+            crate::evidence_handoffs::load_verified(&workspace, &record.handoff.handoff_id)
+                .is_err(),
+            "show accepted forged {mutation} reference"
+        );
+        assert!(
+            crate::evidence_handoffs::list_verified(&workspace).is_err(),
+            "list accepted forged {mutation} reference"
+        );
+        assert!(
+            crate::evidence_handoffs::verify(
+                &workspace,
+                &record.handoff.handoff_id,
+                &forged.record_digest,
+            )
+            .is_err(),
+            "verify accepted forged {mutation} reference"
+        );
+        fs::write(&record_path, &pristine).unwrap();
+    }
+
+    let unrelated_source = temp.path().join("same-bytes-unrelated.json");
+    fs::write(&unrelated_source, br#"{"status":"inspected"}"#).unwrap();
+    let unrelated = workspace
+        .import_artifact(
+            &unrelated_source,
+            vec!["native_stdout".to_owned()],
+            "application/json".to_owned(),
+            "process_stdout",
+            "raw_stream_capture",
+        )
+        .unwrap();
+    let unrelated_record = workspace.load_artifact(&unrelated.artifact_id).unwrap();
+    let mut forged = record.clone();
+    forged.handoff.artifact_ref.artifact_id = unrelated.artifact_id;
+    forged.handoff.artifact_ref.record_digest = unrelated_record.record_digest;
+    forged.record_digest = workspace::digest_serialized(&forged.handoff).unwrap();
+    fs::write(&record_path, serde_json::to_vec_pretty(&forged).unwrap()).unwrap();
+    let error = crate::evidence_handoffs::load_verified(&workspace, &record.handoff.handoff_id)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("not captured by the producer run"));
+    fs::write(&record_path, &pristine).unwrap();
+
+    let mut false_claim = record;
+    false_claim.handoff.handoff_id = format!("handoff_{}", "ff".repeat(16));
+    false_claim.handoff.producer_plan_ref.plan_id = format!("plan_{}", "ff".repeat(16));
+    false_claim.handoff.producer_plan_ref.record_digest = "11".repeat(32);
+    false_claim.handoff.producer_run_ref.run_id = format!("run_{}", "ff".repeat(16));
+    false_claim.handoff.producer_run_ref.record_digest = "22".repeat(32);
+    false_claim.handoff.artifact_ref.artifact_id = format!("artifact_{}", "ff".repeat(16));
+    false_claim.handoff.artifact_ref.record_digest = "33".repeat(32);
+    false_claim.record_digest = workspace::digest_serialized(&false_claim.handoff).unwrap();
+    crate::data_contract_validation::parse_evidence_handoff(
+        &serde_json::to_vec(&false_claim.handoff).unwrap(),
+    )
+    .expect("format-correct false references remain a contract-valid claim");
+    let false_path = workspace
+        .state
+        .join("handoffs")
+        .join(format!("{}.json", false_claim.handoff.handoff_id));
+    fs::write(
+        &false_path,
+        serde_json::to_vec_pretty(&false_claim).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        crate::evidence_handoffs::load_verified(&workspace, &false_claim.handoff.handoff_id)
+            .is_err()
+    );
+    assert!(crate::evidence_handoffs::list_verified(&workspace).is_err());
+    fs::remove_file(false_path).unwrap();
+}
+
+#[test]
+fn evidence_handoff_reads_reject_linked_or_malformed_registry_state_and_linked_cas() {
+    let temp = TempDir::new().unwrap();
+    let (workspace, run) = valid_run(&temp);
+    let run_record = workspace.write_run(run).unwrap();
+    let artifact = run_record.run.artifacts[0].clone();
+    let record = crate::evidence_handoffs::create(
+        &workspace,
+        &run_record.run.run_id,
+        &run_record.record_digest,
+        &artifact.artifact_id,
+    )
+    .unwrap();
+    let record_path = workspace
+        .state
+        .join("handoffs")
+        .join(format!("{}.json", record.handoff.handoff_id));
+    let pristine = fs::read(&record_path).unwrap();
+
+    let record_alias = temp.path().join("handoff-record-alias.json");
+    fs::hard_link(&record_path, &record_alias).unwrap();
+    assert!(
+        crate::evidence_handoffs::load_verified(&workspace, &record.handoff.handoff_id).is_err()
+    );
+    assert!(crate::evidence_handoffs::list_verified(&workspace).is_err());
+    assert!(
+        crate::evidence_handoffs::verify(
+            &workspace,
+            &record.handoff.handoff_id,
+            &record.record_digest,
+        )
+        .is_err()
+    );
+    fs::remove_file(record_alias).unwrap();
+
+    let lineage_paths = [
+        workspace
+            .state
+            .join("plans")
+            .join(format!("{}.json", run_record.run.source_plan_ref.plan_id)),
+        workspace
+            .state
+            .join("runs")
+            .join(format!("{}.json", run_record.run.run_id)),
+        workspace
+            .state
+            .join("artifacts")
+            .join(format!("{}.json", artifact.artifact_id)),
+    ];
+    for (index, lineage_path) in lineage_paths.into_iter().enumerate() {
+        let alias = temp.path().join(format!("lineage-record-alias-{index}.json"));
+        fs::hard_link(&lineage_path, &alias).unwrap();
+        assert!(
+            crate::evidence_handoffs::load_verified(&workspace, &record.handoff.handoff_id)
+                .is_err()
+        );
+        assert!(crate::evidence_handoffs::list_verified(&workspace).is_err());
+        assert!(
+            crate::evidence_handoffs::verify(
+                &workspace,
+                &record.handoff.handoff_id,
+                &record.record_digest,
+            )
+            .is_err()
+        );
+        fs::remove_file(alias).unwrap();
+    }
+
+    let object = workspace.object_path(&artifact.digest.value).unwrap();
+    let object_alias = temp.path().join("handoff-cas-alias");
+    fs::hard_link(&object, &object_alias).unwrap();
+    assert!(
+        crate::evidence_handoffs::load_verified(&workspace, &record.handoff.handoff_id).is_err()
+    );
+    assert!(crate::evidence_handoffs::list_verified(&workspace).is_err());
+    assert!(
+        crate::evidence_handoffs::verify(
+            &workspace,
+            &record.handoff.handoff_id,
+            &record.record_digest,
+        )
+        .is_err()
+    );
+    fs::remove_file(object_alias).unwrap();
+
+    let mut extra: Value = serde_json::from_slice(&pristine).unwrap();
+    extra["status"] = json!("pass");
+    fs::write(&record_path, serde_json::to_vec(&extra).unwrap()).unwrap();
+    assert!(
+        crate::evidence_handoffs::load_verified(&workspace, &record.handoff.handoff_id).is_err()
+    );
+    assert!(crate::evidence_handoffs::list_verified(&workspace).is_err());
+    fs::write(&record_path, &pristine).unwrap();
+
+    let text = String::from_utf8(pristine.clone()).unwrap();
+    let duplicate = text.replacen(
+        "\"record_digest\"",
+        "\"record_digest\":\"00\",\"record_digest\"",
+        1,
+    );
+    fs::write(&record_path, duplicate).unwrap();
+    assert!(
+        crate::evidence_handoffs::load_verified(&workspace, &record.handoff.handoff_id).is_err()
+    );
+    fs::write(&record_path, &pristine).unwrap();
+
+    let mut trailing = pristine;
+    trailing.extend_from_slice(b" {}");
+    fs::write(&record_path, trailing).unwrap();
+    assert!(crate::evidence_handoffs::list_verified(&workspace).is_err());
 }

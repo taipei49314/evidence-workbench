@@ -1,7 +1,7 @@
 use assert_cmd::Command;
-#[cfg(windows)]
-use evidence_workbench::contracts::PlanRecord;
 use evidence_workbench::contracts::RuntimeCapsule;
+#[cfg(windows)]
+use evidence_workbench::contracts::{EvidenceHandoffRecord, PlanRecord};
 use evidence_workbench::data_contract_validation::parse_cli_envelope;
 use evidence_workbench::manifests;
 use evidence_workbench::workspace::digest_serialized;
@@ -274,17 +274,32 @@ fn create_directory_link(target: &Path, link: &Path) {
     std::os::unix::fs::symlink(target, link).expect("create directory symlink fixture");
 }
 
+#[cfg(unix)]
+fn remove_directory_link(link: &Path) {
+    fs::remove_file(link).expect("remove directory symlink fixture");
+}
+
+#[cfg(windows)]
+fn remove_directory_link(link: &Path) {
+    fs::remove_dir(link).expect("remove directory junction fixture");
+}
+
 #[cfg(windows)]
 fn create_directory_link(target: &Path, link: &Path) {
-    let output = ProcessCommand::new("cmd")
-        .args(["/d", "/c", "mklink", "/J"])
-        .arg(link)
-        .arg(target)
+    let output = ProcessCommand::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "New-Item -ItemType Junction -Path $env:EWB_TEST_JUNCTION_LINK -Target $env:EWB_TEST_JUNCTION_TARGET -ErrorAction Stop | Out-Null",
+        ])
+        .env("EWB_TEST_JUNCTION_LINK", link)
+        .env("EWB_TEST_JUNCTION_TARGET", target)
         .output()
         .expect("create directory junction fixture");
     assert!(
         output.status.success(),
-        "mklink /J failed: stdout={} stderr={}",
+        "junction creation failed: stdout={} stderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -337,6 +352,7 @@ fn read_only_registry_lists_are_empty_and_fail_atomically_on_unexpected_entries(
         ("plans", "plans", "plans.list"),
         ("artifacts", "artifacts", "artifacts.list"),
         ("qualifications", "qualifications", "qualifications.list"),
+        ("handoffs", "handoffs", "handoffs.list"),
     ] {
         let (code, value, stderr) = run_json(
             ewb()
@@ -485,6 +501,71 @@ fn init_creates_only_the_exact_new_workspace_root() {
         .map(|entry| entry.unwrap().file_name())
         .collect::<Vec<_>>();
     assert_eq!(entries, vec![OsString::from("brand new workspace")]);
+}
+
+#[test]
+fn handoff_registry_is_required_and_idempotent_init_upgrades_an_existing_workspace() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let handoffs = temp.path().join(".ewb/handoffs");
+    fs::remove_dir(&handoffs).unwrap();
+
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "list"]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert_eq!(failure["ok"], false);
+    assert!(!handoffs.exists());
+
+    let (code, doctor, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .arg("doctor"),
+    );
+    assert_eq!(code, 0, "{doctor:?} {stderr}");
+    assert_eq!(doctor["data"]["workspace_check"]["healthy"], false);
+
+    init(temp.path());
+    assert!(handoffs.is_dir());
+    let (code, listed, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["data"], json!([]));
+}
+
+#[test]
+fn handoff_registry_rejects_a_linked_storage_directory() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let handoffs = temp.path().join(".ewb/handoffs");
+    let link_target = temp.path().join("linked handoff target");
+    fs::remove_dir(&handoffs).unwrap();
+    fs::create_dir(&link_target).unwrap();
+    create_directory_link(&link_target, &handoffs);
+
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "list"]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert_eq!(failure["ok"], false);
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("real directory")
+    );
+    assert_eq!(fs::read_dir(link_target).unwrap().count(), 0);
 }
 
 #[test]
@@ -1315,6 +1396,31 @@ fn artifact_store_preserves_arbitrary_bytes_and_detects_tampering() {
     assert_eq!(code, 0, "{verified:?} {stderr}");
     assert_eq!(verified["data"]["verified"], true);
 
+    let shard = object.parent().unwrap().to_path_buf();
+    let external_shard = temp.path().join("external artifact shard");
+    fs::rename(&shard, &external_shard).unwrap();
+    create_directory_link(&external_shard, &shard);
+    for subcommand in ["show", "list", "verify"] {
+        let mut command = ewb();
+        command
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", subcommand]);
+        if subcommand != "list" {
+            command.arg(id);
+        }
+        let (code, failure, stderr) = run_json(&mut command);
+        assert_eq!(code, 2, "{failure:?} {stderr}");
+        assert!(
+            failure["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("real directory")
+        );
+    }
+    remove_directory_link(&shard);
+    fs::rename(&external_shard, &shard).unwrap();
+
     fs::write(&object, b"tampered").unwrap();
     let (code, failure, _) = run_json(
         ewb()
@@ -2028,6 +2134,459 @@ fn storage_ids_reject_traversal() {
         );
         assert_ne!(code, 0, "accepted {malicious:?}: {value:?}");
     }
+    for malicious in [
+        "../outside",
+        "..\\outside",
+        "C:outside",
+        "handoff_../../outside",
+    ] {
+        let (code, value, _) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["handoffs", "show", malicious]),
+        );
+        assert_ne!(code, 0, "accepted {malicious:?}: {value:?}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn handoff_cli_binds_one_executed_run_artifact_without_execution_or_authority_side_effects() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let (repo, head) = make_repo(temp.path());
+    let fake_dir = temp.path().join("fake-bin");
+    install_fake(&fake_dir);
+    let planned = plan_execution_boundary(temp.path(), &repo, &head, &fake_dir);
+    let (code, executed, stderr) = execute_execution_boundary(temp.path(), &planned, &fake_dir);
+    assert_eq!(code, 0, "{executed:?} {stderr}");
+
+    let run_record = &executed["data"];
+    let run_id = run_record["run"]["run_id"].as_str().unwrap();
+    let run_digest = run_record["record_digest"].as_str().unwrap();
+    let artifact_id = run_record["run"]["artifacts"][0]["artifact_id"]
+        .as_str()
+        .unwrap();
+    let (code, artifact, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", "show", artifact_id]),
+    );
+    assert_eq!(code, 0, "{artifact:?} {stderr}");
+
+    let stable_before = ["objects", "artifacts", "plans", "runs", "executions"]
+        .into_iter()
+        .map(|name| (name, tree_snapshot(&temp.path().join(".ewb").join(name))))
+        .collect::<BTreeMap<_, _>>();
+
+    let wrong_run_digest = "ff".repeat(32);
+    let (code, wrong_digest, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "handoffs",
+                "create",
+                "--source-run",
+                run_id,
+                "--source-run-digest",
+                &wrong_run_digest,
+                "--artifact",
+                artifact_id,
+            ]),
+    );
+    assert_eq!(code, 2, "{wrong_digest:?} {stderr}");
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/handoffs"))
+            .unwrap()
+            .count(),
+        0
+    );
+
+    let non_run_artifact =
+        planned["data"]["payload"]["resolved_tool_identity"]["snapshot_artifact_id"]
+            .as_str()
+            .unwrap();
+    let (code, unrelated, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "handoffs",
+                "create",
+                "--source-run",
+                run_id,
+                "--source-run-digest",
+                run_digest,
+                "--artifact",
+                non_run_artifact,
+            ]),
+    );
+    assert_eq!(code, 2, "{unrelated:?} {stderr}");
+    assert!(
+        unrelated["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not captured by the producer run")
+    );
+
+    let (code, created, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "handoffs",
+                "create",
+                "--source-run",
+                run_id,
+                "--source-run-digest",
+                run_digest,
+                "--artifact",
+                artifact_id,
+            ]),
+    );
+    assert_eq!(code, 0, "{created:?} {stderr}");
+    assert_eq!(created["command"], "handoffs.create");
+    let record = &created["data"];
+    let handoff = &record["handoff"];
+    let handoff_id = handoff["handoff_id"].as_str().unwrap();
+    let handoff_digest = record["record_digest"].as_str().unwrap();
+    assert_eq!(record["schema_version"], "evidence_handoff_record/v1");
+    assert_eq!(handoff["schema_version"], "evidence-handoff/v1");
+    assert_eq!(
+        handoff["producer_plan_ref"]["plan_id"],
+        planned["data"]["plan_id"]
+    );
+    assert_eq!(
+        handoff["producer_plan_ref"]["record_digest"],
+        planned["data"]["record_digest"]
+    );
+    assert_eq!(handoff["producer_run_ref"]["run_id"], run_id);
+    assert_eq!(handoff["producer_run_ref"]["record_digest"], run_digest);
+    assert_eq!(handoff["artifact_ref"]["artifact_id"], artifact_id);
+    assert_eq!(
+        handoff["artifact_ref"]["record_digest"],
+        artifact["data"]["record_digest"]
+    );
+    assert_eq!(handoff["relationship"], "captured_run_artifact");
+    assert_eq!(handoff["consumer_treatment"], "untrusted_exact_bytes");
+    assert_eq!(handoff["authority_effect"], "none");
+    assert_eq!(
+        record
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["handoff", "record_digest", "schema_version"])
+    );
+    assert_eq!(
+        handoff
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "artifact_ref",
+            "authority_effect",
+            "consumer_treatment",
+            "created_at",
+            "handoff_id",
+            "producer_plan_ref",
+            "producer_run_ref",
+            "relationship",
+            "schema_version",
+        ])
+    );
+
+    for (name, before) in stable_before {
+        assert_eq!(
+            tree_snapshot(&temp.path().join(".ewb").join(name)),
+            before,
+            "handoff create mutated .ewb/{name}"
+        );
+    }
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/handoffs"))
+            .unwrap()
+            .count(),
+        1
+    );
+
+    let (code, shown, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "show", handoff_id]),
+    );
+    assert_eq!(code, 0, "{shown:?} {stderr}");
+    assert_eq!(shown["data"], *record);
+
+    let (code, listed, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["data"], json!([record.clone()]));
+
+    let (code, verified, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "handoffs",
+                "verify",
+                handoff_id,
+                "--handoff-digest",
+                handoff_digest,
+            ]),
+    );
+    assert_eq!(code, 0, "{verified:?} {stderr}");
+    assert_eq!(verified["data"], *record);
+
+    let stale_handoff_digest = "00".repeat(32);
+    let (code, stale, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "handoffs",
+                "verify",
+                handoff_id,
+                "--handoff-digest",
+                &stale_handoff_digest,
+            ]),
+    );
+    assert_eq!(code, 2, "{stale:?} {stderr}");
+    assert!(
+        stale["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("retained handoff record")
+    );
+
+    let record_path = temp
+        .path()
+        .join(".ewb/handoffs")
+        .join(format!("{handoff_id}.json"));
+    let pristine_record_bytes = fs::read(&record_path).unwrap();
+    let typed_record: EvidenceHandoffRecord = serde_json::from_value(record.clone()).unwrap();
+
+    let mut self_consistent_rewrite = typed_record.clone();
+    self_consistent_rewrite.handoff.created_at = "2030-01-01T00:00:00Z".to_owned();
+    self_consistent_rewrite.record_digest =
+        digest_serialized(&self_consistent_rewrite.handoff).unwrap();
+    fs::write(
+        &record_path,
+        serde_json::to_vec_pretty(&self_consistent_rewrite).unwrap(),
+    )
+    .unwrap();
+    let (code, inspected_rewrite, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "show", handoff_id]),
+    );
+    assert_eq!(code, 0, "{inspected_rewrite:?} {stderr}");
+    assert_eq!(
+        inspected_rewrite["data"],
+        serde_json::to_value(&self_consistent_rewrite).unwrap()
+    );
+    let (code, stale_after_rewrite, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "handoffs",
+                "verify",
+                handoff_id,
+                "--handoff-digest",
+                handoff_digest,
+            ]),
+    );
+    assert_eq!(code, 2, "{stale_after_rewrite:?} {stderr}");
+    assert!(
+        stale_after_rewrite["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("retained handoff record")
+    );
+    fs::write(&record_path, &pristine_record_bytes).unwrap();
+
+    let record_alias = temp.path().join("external-handoff-record.json");
+    fs::hard_link(&record_path, &record_alias).unwrap();
+    for subcommand in ["show", "list"] {
+        let mut command = ewb();
+        command
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", subcommand]);
+        if subcommand == "show" {
+            command.arg(handoff_id);
+        }
+        let (code, failure, stderr) = run_json(&mut command);
+        assert_eq!(code, 2, "{failure:?} {stderr}");
+        assert!(
+            failure["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("single-link")
+        );
+    }
+    fs::remove_file(record_alias).unwrap();
+
+    let artifact_digest = artifact["data"]["artifact"]["digest"]["value"]
+        .as_str()
+        .unwrap();
+    let artifact_object = temp
+        .path()
+        .join(".ewb/objects/sha256")
+        .join(&artifact_digest[..2])
+        .join(&artifact_digest[2..]);
+    let object_alias = temp.path().join("external-handoff-object");
+    fs::hard_link(&artifact_object, &object_alias).unwrap();
+    for subcommand in ["show", "list"] {
+        let mut command = ewb();
+        command
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", subcommand]);
+        if subcommand == "show" {
+            command.arg(handoff_id);
+        }
+        let (code, failure, stderr) = run_json(&mut command);
+        assert_eq!(code, 2, "{failure:?} {stderr}");
+        assert!(
+            failure["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("single-link")
+        );
+    }
+    fs::remove_file(object_alias).unwrap();
+
+    let artifact_shard = artifact_object.parent().unwrap().to_path_buf();
+    let external_shard = temp.path().join("external handoff CAS shard");
+    fs::rename(&artifact_shard, &external_shard).unwrap();
+    create_directory_link(&external_shard, &artifact_shard);
+    let (code, linked_artifact, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", "show", artifact_id]),
+    );
+    assert_eq!(code, 2, "{linked_artifact:?} {stderr}");
+    assert!(
+        linked_artifact["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("real directory")
+    );
+    for subcommand in ["show", "list", "verify"] {
+        let mut command = ewb();
+        command
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", subcommand]);
+        match subcommand {
+            "show" => {
+                command.arg(handoff_id);
+            }
+            "verify" => {
+                command.args([handoff_id, "--handoff-digest", handoff_digest]);
+            }
+            "list" => {}
+            _ => unreachable!(),
+        }
+        let (code, failure, stderr) = run_json(&mut command);
+        assert_eq!(code, 2, "{failure:?} {stderr}");
+        assert!(
+            failure["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("real directory")
+        );
+    }
+    remove_directory_link(&artifact_shard);
+    fs::rename(&external_shard, &artifact_shard).unwrap();
+
+    let (code, second, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "handoffs",
+                "create",
+                "--source-run",
+                run_id,
+                "--source-run-digest",
+                run_digest,
+                "--artifact",
+                artifact_id,
+            ]),
+    );
+    assert_eq!(code, 0, "{second:?} {stderr}");
+    let second_id = second["data"]["handoff"]["handoff_id"].as_str().unwrap();
+    let (code, sorted_list, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "list"]),
+    );
+    assert_eq!(code, 0, "{sorted_list:?} {stderr}");
+    let actual_ids = sorted_list["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["handoff"]["handoff_id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let mut expected_ids = vec![handoff_id, second_id];
+    expected_ids.sort();
+    assert_eq!(actual_ids, expected_ids);
+
+    let mut false_claim = typed_record;
+    false_claim.handoff.handoff_id = format!("handoff_{}", "ff".repeat(16));
+    false_claim.handoff.producer_plan_ref.plan_id = format!("plan_{}", "ff".repeat(16));
+    false_claim.handoff.producer_plan_ref.record_digest = "11".repeat(32);
+    false_claim.handoff.producer_run_ref.run_id = format!("run_{}", "ff".repeat(16));
+    false_claim.handoff.producer_run_ref.record_digest = "22".repeat(32);
+    false_claim.handoff.artifact_ref.artifact_id = format!("artifact_{}", "ff".repeat(16));
+    false_claim.handoff.artifact_ref.record_digest = "33".repeat(32);
+    false_claim.record_digest = digest_serialized(&false_claim.handoff).unwrap();
+    evidence_workbench::data_contract_validation::parse_evidence_handoff(
+        &serde_json::to_vec(&false_claim.handoff).unwrap(),
+    )
+    .expect("format-correct false references remain a contract-valid claim");
+    let false_id = false_claim.handoff.handoff_id.clone();
+    let false_path = temp
+        .path()
+        .join(".ewb/handoffs")
+        .join(format!("{false_id}.json"));
+    fs::write(
+        &false_path,
+        serde_json::to_vec_pretty(&false_claim).unwrap(),
+    )
+    .unwrap();
+    let (code, false_show, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "show", &false_id]),
+    );
+    assert_eq!(code, 2, "{false_show:?} {stderr}");
+    let (code, false_list, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["handoffs", "list"]),
+    );
+    assert_eq!(code, 2, "{false_list:?} {stderr}");
+    fs::remove_file(false_path).unwrap();
 }
 
 #[cfg(windows)]

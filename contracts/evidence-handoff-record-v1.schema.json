@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench local evidence handoff registry wrapper v1",
+  "description": "Wraps one evidence-handoff/v1 object. Shape parsing alone does not verify lineage; EWB registry reads must re-verify same-workspace plan, run, artifact-record, run-membership, and CAS state. Verification does not create a verdict, status, score, pass state, or authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "record_digest", "handoff"],
+  "properties": {
+    "schema_version": { "const": "evidence_handoff_record/v1" },
+    "record_digest": {
+      "description": "SHA-256 over compact typed JSON for the evidence-handoff/v1 object, not the enclosing registry file.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "handoff": { "$ref": "evidence-handoff-v1.schema.json" }
+  }
+}

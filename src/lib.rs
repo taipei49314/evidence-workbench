@@ -3,6 +3,7 @@ pub mod candidate_pins;
 pub mod cli;
 pub mod contracts;
 pub mod data_contract_validation;
+pub mod evidence_handoffs;
 pub mod git_subject;
 pub mod manifests;
 pub mod native;
