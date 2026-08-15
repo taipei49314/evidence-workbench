@@ -1,0 +1,32 @@
+{
+  "schema_version": "audit-receipt/v1",
+  "topology_ref": {
+    "topology_id": "topology_00000000000000000000000000000000",
+    "topology_digest": "d67c71b5f5cd92bb6336e3d48fcbae9686eea432170d94cf06dd587b8c431c89"
+  },
+  "recorded_runs": [
+    {
+      "step_id": "step_11111111111111111111111111111111",
+      "plan_ref": {
+        "plan_id": "plan_11111111111111111111111111111111",
+        "record_digest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "run_ref": {
+        "run_id": "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "record_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "step_id": "step_22222222222222222222222222222222",
+      "plan_ref": {
+        "plan_id": "plan_22222222222222222222222222222222",
+        "record_digest": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "run_ref": {
+        "run_id": "run_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  ],
+  "authority_effect": "none"
+}

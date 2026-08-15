@@ -49,6 +49,47 @@ authority.
   in v1; it is not a content digest, authenticity proof, or source of trust.
   Strict Rust loading requires the registry filename to match the wrapped
   handoff ID.
+- `audit-topology/v1` is a closed portable grouping of claimed exact
+  `PlanRecordRef` values in a static DAG. Every step has a typed opaque step ID,
+  one claimed plan ID and plan-record digest, and zero or more declared
+  predecessor step IDs. If a future workspace-aware carrier verifies the
+  reference, that exact referenced plan remains the sole binding for
+  its tool, subject or artifact input, parameters, capabilities, and direct
+  invocation; the topology cannot restate or override any of them. A
+  predecessor is only a structural declaration. Standalone parsing does not
+  prove temporal planning, capture, or execution order, and array position has
+  no such meaning. Steps and each predecessor list use canonical lexicographic
+  ID order so a single typed value has one compact serialization. Immutability
+  follows only if a future carrier retains and verifies that exact value and its
+  digest. There are no
+  required/optional, condition, retry, artifact-role selector, result, status,
+  completeness, or authority fields.
+- `audit-receipt/v1` is a portable reference object for one exact typed audit
+  topology and a canonical, nonempty, possibly incomplete subset of its steps'
+  plan/run record references. Its topology digest is SHA-256 over the compact
+  typed `AuditTopology` JSON field order, not the raw bytes of a topology file.
+  A receipt intentionally has no receipt ID or timestamp; a future outer
+  registry, if implemented, must own record identity and capture metadata.
+  Standalone parsing checks only the closed shape, typed IDs, digests,
+  uniqueness, and canonical order. Cross-contract validation additionally
+  checks the topology ID/digest, step membership, and exact plan-ref equality.
+  It does not access a workspace and therefore does not prove that a plan or run
+  exists, that the run names the plan, that predecessors ran first, or that any
+  artifact lineage is valid. The receipt can reference a run whose termination
+  was nonzero, timed out, or failed to spawn without copying or interpreting
+  that fact. It cannot carry a native result, termination, aggregate overall,
+  pass/fail, verdict, score, rank, trust, certification, command, argv,
+  condition, capability, or authority claim. `authority_effect` is fixed to
+  `none`.
+
+The typed `topology_digest` binds only the serialized topology value's integrity
+and identity. It is not producer authenticity, proof of plan existence or
+review, or a source of native or workbench authority.
+
+These two audit contracts define no CLI, workspace registry, initialization,
+execution, scheduling, or record-verification behavior. Artifact data flow
+continues to use separately verified `evidence-handoff/v1` records; neither
+contract selects an artifact by role or infers a handoff from a run.
 
 Every object shape is closed with `additionalProperties: false`. Rust parsing
 also rejects duplicate JSON keys and applies semantic cross-field validation.

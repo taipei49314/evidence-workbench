@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench claimed-reference-only audit receipt v1",
+  "description": "Claims a precise audit-topology/v1 reference and a nonempty subset of claimed exact EWB plan/run-record references for its steps. Standalone parsing does not prove that any referenced record is retained. The receipt makes no completeness, ordering, lineage, execution-success, native-result, aggregate-result, trust, certification, or authority claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "topology_ref", "recorded_runs", "authority_effect"],
+  "properties": {
+    "schema_version": { "const": "audit-receipt/v1" },
+    "topology_ref": { "$ref": "#/$defs/topology_ref" },
+    "recorded_runs": {
+      "description": "A canonical lexicographic nonempty subset of topology steps. It need not include predecessors and is not a completeness, ordering, or success claim.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/recorded_run" }
+    },
+    "authority_effect": { "const": "none" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "topology_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topology_id", "topology_digest"],
+      "properties": {
+        "topology_id": { "type": "string", "pattern": "^topology_[0-9a-f]{32}$" },
+        "topology_digest": {
+          "description": "SHA-256 over compact typed AuditTopology JSON. It is value identity/integrity only, not authenticity, plan review, or authority.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "plan_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_id", "record_digest"],
+      "properties": {
+        "plan_id": { "type": "string", "pattern": "^plan_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "run_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "record_digest"],
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^run_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "recorded_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "plan_ref", "run_ref"],
+      "properties": {
+        "step_id": { "type": "string", "pattern": "^step_[0-9a-f]{32}$" },
+        "plan_ref": { "$ref": "#/$defs/plan_ref" },
+        "run_ref": { "$ref": "#/$defs/run_ref" }
+      }
+    }
+  }
+}
