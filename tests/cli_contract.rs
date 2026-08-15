@@ -269,6 +269,27 @@ fn tree_snapshot(root: &Path) -> BTreeMap<String, String> {
     output
 }
 
+#[cfg(unix)]
+fn create_directory_link(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("create directory symlink fixture");
+}
+
+#[cfg(windows)]
+fn create_directory_link(target: &Path, link: &Path) {
+    let output = ProcessCommand::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .expect("create directory junction fixture");
+    assert!(
+        output.status.success(),
+        "mklink /J failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn json_mode_wraps_argument_errors_without_stderr_noise() {
     let (code, value, stderr) = run_json(ewb().args(["--json", "not-a-command"]));
@@ -312,6 +333,70 @@ fn init_does_not_create_a_missing_parent_chain() {
     assert_eq!(code, 2, "{value:?} {stderr}");
     assert_eq!(value["ok"], false);
     assert!(!missing_parent.exists());
+}
+
+#[test]
+fn init_rejects_a_linked_workspace_root_without_writing_the_target() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().join("target");
+    let linked_root = temp.path().join("linked root");
+    fs::create_dir(&target).unwrap();
+    create_directory_link(&target, &linked_root);
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(&linked_root)
+            .arg("init"),
+    );
+
+    assert_eq!(code, 2, "{value:?} {stderr}");
+    assert_eq!(value["ok"], false);
+    assert!(!target.join(".ewb").exists());
+}
+
+#[test]
+fn init_rejects_a_missing_leaf_below_a_linked_parent() {
+    let temp = TempDir::new().unwrap();
+    let target_parent = temp.path().join("target parent");
+    let linked_parent = temp.path().join("linked parent");
+    fs::create_dir(&target_parent).unwrap();
+    create_directory_link(&target_parent, &linked_parent);
+    let requested_root = linked_parent.join("missing workspace");
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(&requested_root)
+            .arg("init"),
+    );
+
+    assert_eq!(code, 2, "{value:?} {stderr}");
+    assert_eq!(value["ok"], false);
+    assert!(!target_parent.join("missing workspace").exists());
+    assert!(!target_parent.join(".ewb").exists());
+}
+
+#[test]
+fn init_rejects_an_existing_child_below_a_linked_parent() {
+    let temp = TempDir::new().unwrap();
+    let target_parent = temp.path().join("target parent");
+    let target_child = target_parent.join("existing workspace");
+    let linked_parent = temp.path().join("linked parent");
+    fs::create_dir_all(&target_child).unwrap();
+    create_directory_link(&target_parent, &linked_parent);
+    let requested_root = linked_parent.join("existing workspace");
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(&requested_root)
+            .arg("init"),
+    );
+
+    assert_eq!(code, 2, "{value:?} {stderr}");
+    assert_eq!(value["ok"], false);
+    assert!(!target_child.join(".ewb").exists());
 }
 
 #[test]

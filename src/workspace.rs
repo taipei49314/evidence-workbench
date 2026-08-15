@@ -896,7 +896,7 @@ fn prepare_workspace_root(path: &Path) -> Result<PathBuf> {
         bail!("workspace root cannot be empty");
     }
     if path.exists() {
-        validate_real_dir(path)?;
+        validate_real_directory_chain(path)?;
         return path
             .canonicalize()
             .with_context(|| format!("cannot resolve workspace root {}", path.display()));
