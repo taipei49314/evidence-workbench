@@ -543,6 +543,7 @@ mod tests {
             include_str!("../contracts/runtime-capsule-v1.schema.json"),
             include_str!("../contracts/native-delivery-qualification-v1.schema.json"),
             include_str!("../contracts/ide-handoff-v1.schema.json"),
+            include_str!("../contracts/build-identity-v1.schema.json"),
         ] {
             let schema: Value = serde_json::from_str(raw).expect("valid JSON Schema JSON");
             assert_objects_are_closed(&schema);

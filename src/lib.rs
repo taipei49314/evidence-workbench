@@ -1,3 +1,4 @@
+pub mod build_identity;
 pub mod candidate_pins;
 pub mod cli;
 pub mod contracts;

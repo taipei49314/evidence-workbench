@@ -6,7 +6,7 @@ use evidence_workbench::manifests;
 use evidence_workbench::workspace::digest_serialized;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 #[cfg(windows)]
@@ -296,6 +296,102 @@ fn json_mode_wraps_argument_errors_without_stderr_noise() {
     assert_eq!(code, 2);
     assert_eq!(value["ok"], false);
     assert!(stderr.is_empty(), "stderr was not pure: {stderr:?}");
+}
+
+#[test]
+fn build_show_observes_the_current_executable_file_without_workspace_writes() {
+    let temp = TempDir::new().unwrap();
+    let before = tree_snapshot(temp.path());
+    let executable_path = assert_cmd::cargo::cargo_bin("ewb");
+    let executable_bytes = fs::read(&executable_path).unwrap();
+
+    let (code, value, stderr) = run_json(
+        production_ewb()
+            .current_dir(temp.path())
+            .args(["--json", "build", "show"]),
+    );
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert!(stderr.is_empty(), "stderr was not pure: {stderr:?}");
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["command"], "build.show");
+    assert_eq!(value["data"]["schema_version"], "build_identity/v1");
+    assert_eq!(value["data"]["package"]["name"], "evidence-workbench");
+    assert_eq!(
+        value["data"]["package"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(
+        value["data"]["executable"]["observation_scope"],
+        "current_executable_file_at_query"
+    );
+    assert_eq!(
+        value["data"]["executable"]["sha256"],
+        hex::encode(Sha256::digest(&executable_bytes))
+    );
+    assert_eq!(
+        value["data"]["executable"]["byte_length"],
+        u64::try_from(executable_bytes.len()).unwrap()
+    );
+    assert_eq!(value["data"]["authority_effect"], "none");
+
+    let data_keys = value["data"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        data_keys,
+        BTreeSet::from([
+            "authority_effect",
+            "executable",
+            "package",
+            "schema_version",
+            "target",
+            "vcs_base",
+        ])
+    );
+    let vcs = &value["data"]["vcs_base"];
+    let vcs_keys = vcs
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        vcs_keys,
+        BTreeSet::from([
+            "commit",
+            "dirty",
+            "exact_tag",
+            "reporting_state",
+            "scope",
+            "tree",
+        ])
+    );
+    match vcs["reporting_state"].as_str().unwrap() {
+        "not_reported" => {
+            assert_eq!(vcs["scope"], "not_reported");
+            for field in ["commit", "tree", "dirty", "exact_tag"] {
+                assert_eq!(vcs[field], Value::Null);
+            }
+        }
+        "builder_asserted" => {
+            assert_eq!(vcs["scope"], "builder_recorded_vcs_base");
+            for field in ["commit", "tree"] {
+                let oid = vcs[field].as_str().unwrap();
+                assert!(matches!(oid.len(), 40 | 64));
+                assert!(oid.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            }
+            let dirty = vcs["dirty"].as_bool().unwrap();
+            if dirty {
+                assert_eq!(vcs["exact_tag"], Value::Null);
+            }
+        }
+        state => panic!("unexpected VCS reporting state: {state}"),
+    }
+    assert_eq!(before, tree_snapshot(temp.path()));
 }
 
 #[test]

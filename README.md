@@ -25,6 +25,15 @@ The embedded `upstream_pin/v1` registry covers all twelve trusted tool manifests
 
 TomorrowCI is the only ready production adapter and remains qualification-gated. The other eleven fail closed. Readiness requires the complete operation-specific closure plus an exact local qualification record; a launcher hash or manifest flag alone is insufficient.
 
+## Neutral integration boundary
+
+The canonical neutral integration boundary is the `ewb --json` envelope plus
+content-addressed exact artifacts and immutable plan/run IDs and digests. An
+IDE or other UI may consume those references, but remains optional and gains no
+authority. Multi-tool composition is not implemented yet; this boundary is the
+stable interchange surface, not a claim that a complete multi-tool carrier has
+landed.
+
 StateWeaver's completed upstream candidate is recorded separately in a strict `candidate_pin/v1`: source commit `598753d182dda65c73a313e9efbf20b826942f0a`, payload-manifest SHA-256 `8c7c77d59d4cf3abdcadcce3f2d110ca085789da1ec14a2301245f3418b78bc3`, and candidate workflow run `31711437241`. At admission, all 113 listed checksums matched and the payload-manifest OIDC attestation verified. This is an integrity/provenance admission, not native authority.
 
 The adapter remains experimental and cannot accept an arbitrary repository. The candidate itself reports `CANDIDATE_READY_FOR_EXTERNAL_QUALIFICATION` and `release_eligible=false`; it targets Linux x86_64 CPython 3.13 and includes wheels but no Python interpreter. It is therefore not an execution capsule for the current Windows EWB. Python-backed adapters continue to fail closed at planning until EWB can snapshot the complete interpreter, runtime, distribution, and transitive dependency closure. The GitHub Actions artifact expires on 2026-11-11, and EWB does not silently treat that remote artifact as durable or available.
@@ -43,6 +52,32 @@ ewb --help
 ```
 
 Or run [`scripts/install-local.ps1`](scripts/install-local.ps1).
+
+The install script records the checkout's builder-observed Git base and then
+verifies the installed executable with:
+
+```powershell
+ewb --json build show
+```
+
+`build show` is workspace-independent and read-only. It always hashes the
+current executable file. VCS fields are either `not_reported` or explicitly
+`builder_asserted`; EWB never invokes Git at query time and does not treat the
+record as a source attestation. A dirty checkout reports only its HEAD commit
+and tree as a builder-recorded base with `dirty: true`, never as the source of
+the built bytes. An exact tag is reported only for a clean base with exactly
+one tag at HEAD; a clean untagged base keeps commit/tree and reports
+`exact_tag: null`. Trusted builders set `EWB_BUILD_VCS_COMMIT`,
+`EWB_BUILD_VCS_TREE`, and `EWB_BUILD_VCS_DIRTY` together, with optional
+`EWB_BUILD_VCS_TAG`; partial, mixed-object-format, dirty-tagged, or malformed
+metadata fails the build. Direct `cargo install --path .` builds intentionally
+report `not_reported` unless those variables are supplied by a trusted builder.
+CI installs from Cargo's extracted packaged source before checking this
+contract, rather than reinstalling from the checkout. On Windows the
+executable file is held without write/delete sharing while it is hashed. On
+Unix this remains a path-based file observation with an explicit same-user
+replacement race; neither platform claims to attest the already-loaded process
+image.
 
 ## Start
 
@@ -257,6 +292,7 @@ Errors are also one JSON value and never include native output or credentials.
 - [`contracts/candidate-pin-v1.schema.json`](contracts/candidate-pin-v1.schema.json)
 - [`contracts/upstream-pin-v1.schema.json`](contracts/upstream-pin-v1.schema.json)
 - [`contracts/native-delivery-qualification-v1.schema.json`](contracts/native-delivery-qualification-v1.schema.json)
+- [`contracts/build-identity-v1.schema.json`](contracts/build-identity-v1.schema.json)
 
 The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or aggregate result field. A native projection carries its own namespace, value, `projection_only: true`, artifact ID, and exact locator. In `instrument_run/v1`, `native_authority` is schema-constrained to `not_reported`, and artifact `source_run_id` is constrained to `null` rather than asserting unverified lineage; either feature requires a new contract version with native rebinding rather than widening v1 in place.
 
