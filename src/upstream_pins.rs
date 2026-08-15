@@ -592,22 +592,50 @@ mod tests {
         assert!(!trusted.raw.as_bytes().contains(&b'\r'));
         assert_eq!(
             trusted.sha256,
-            "9615314a143a0fd467c30609e4aeaa74b20a14a31300d0b6ea38c679196e5e05"
+            "c6403a91db272ca75e4906a3efd91f4bf644e67030eb7b83fe16ea264517de7a"
         );
         assert_eq!(
             trusted.pin.source.commit_sha,
-            "bd33898ddf7396054ce58d438ff02934bcf7e27b"
+            "dacae21258e9ab6c7557c69e0d314341ef8e2441"
         );
         assert_eq!(
             trusted.pin.source.tree_sha,
-            "fee1e8ca956f0a6a66632376de3f8893b195e915"
+            "49f6ca7bd984db124c6ce6a9cc0e37649993e747"
         );
-        assert_eq!(trusted.pin.software_version, "0.1.41");
-        assert!(trusted.pin.release.is_none());
-        assert_eq!(trusted.pin.evidence.len(), 1);
+        assert_eq!(trusted.pin.software_version, "0.1.42");
+        let release = trusted.pin.release.as_ref().expect("published release");
+        assert_eq!(release.channel, ReleaseChannel::GithubRelease);
+        assert_eq!(release.version, trusted.pin.software_version);
+        assert_eq!(release.tag, "v0.1.42");
+        assert_eq!(release.release_id.as_deref(), Some("371041382"));
+        assert_eq!(release.subject_commit_sha, trusted.pin.source.commit_sha);
+        assert_eq!(release.subject_tree_sha, trusted.pin.source.tree_sha);
+        assert_eq!(trusted.pin.evidence.len(), 4);
         assert_eq!(trusted.pin.evidence[0].kind, EvidenceKind::WorkflowRun);
-        assert_eq!(trusted.pin.evidence[0].id, "31867786471");
+        assert_eq!(trusted.pin.evidence[0].id, "31883712871");
         assert_eq!(trusted.pin.evidence[0].status, EvidenceStatus::Success);
+        assert_eq!(trusted.pin.evidence[1].kind, EvidenceKind::WorkflowRun);
+        assert_eq!(trusted.pin.evidence[1].id, "31884122352");
+        assert_eq!(trusted.pin.evidence[1].status, EvidenceStatus::Success);
+        assert_eq!(trusted.pin.evidence[2].kind, EvidenceKind::ReleaseAsset);
+        assert_eq!(trusted.pin.evidence[2].id, "515661572");
+        assert_eq!(trusted.pin.evidence[2].size_bytes, Some(169_716));
+        assert_eq!(
+            trusted.pin.evidence[2].sha256.as_deref(),
+            Some("22a90868544f8d49aeb42e3c681b842addebb9ecddc42298651a08bc49c9b9ac")
+        );
+        assert_eq!(trusted.pin.evidence[2].status, EvidenceStatus::Published);
+        assert_eq!(trusted.pin.evidence[3].kind, EvidenceKind::ReleaseAsset);
+        assert_eq!(trusted.pin.evidence[3].id, "515661571");
+        assert_eq!(trusted.pin.evidence[3].size_bytes, Some(153_890));
+        assert_eq!(
+            trusted.pin.evidence[3].sha256.as_deref(),
+            Some("53328807017e0cccc83afcddf4043b6be88217a4ec8305203d9257031790b903")
+        );
+        assert_eq!(trusted.pin.evidence[3].status, EvidenceStatus::Published);
+        for evidence in &trusted.pin.evidence {
+            assert_eq!(evidence.subject_commit_sha, trusted.pin.source.commit_sha);
+        }
         assert_eq!(
             trusted.pin.execution_readiness.state,
             ReadinessState::FailClosed

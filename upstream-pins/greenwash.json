@@ -1,8 +1,13 @@
 {
   "schema_version":"upstream_pin/v1","tool_manifest_id":"greenwash","repository_url":"https://github.com/taipei49314/greenwash",
-  "source":{"default_branch":"main","commit_sha":"bd33898ddf7396054ce58d438ff02934bcf7e27b","tree_sha":"fee1e8ca956f0a6a66632376de3f8893b195e915"},
-  "software_version":"0.1.41","release":null,
-  "evidence":[{"kind":"workflow_run","id":"31867786471","name":"ci","subject_commit_sha":"bd33898ddf7396054ce58d438ff02934bcf7e27b","sha256":null,"size_bytes":null,"status":"success","expires_at":null}],
+  "source":{"default_branch":"main","commit_sha":"dacae21258e9ab6c7557c69e0d314341ef8e2441","tree_sha":"49f6ca7bd984db124c6ce6a9cc0e37649993e747"},
+  "software_version":"0.1.42","release":{"channel":"github_release","version":"0.1.42","tag":"v0.1.42","release_id":"371041382","subject_commit_sha":"dacae21258e9ab6c7557c69e0d314341ef8e2441","subject_tree_sha":"49f6ca7bd984db124c6ce6a9cc0e37649993e747"},
+  "evidence":[
+    {"kind":"workflow_run","id":"31883712871","name":"ci","subject_commit_sha":"dacae21258e9ab6c7557c69e0d314341ef8e2441","sha256":null,"size_bytes":null,"status":"success","expires_at":null},
+    {"kind":"workflow_run","id":"31884122352","name":"release","subject_commit_sha":"dacae21258e9ab6c7557c69e0d314341ef8e2441","sha256":null,"size_bytes":null,"status":"success","expires_at":null},
+    {"kind":"release_asset","id":"515661572","name":"greenwash-0.1.42-py3-none-any.whl","subject_commit_sha":"dacae21258e9ab6c7557c69e0d314341ef8e2441","sha256":"22a90868544f8d49aeb42e3c681b842addebb9ecddc42298651a08bc49c9b9ac","size_bytes":169716,"status":"published","expires_at":null},
+    {"kind":"release_asset","id":"515661571","name":"greenwash.pyz","subject_commit_sha":"dacae21258e9ab6c7557c69e0d314341ef8e2441","sha256":"53328807017e0cccc83afcddf4043b6be88217a4ec8305203d9257031790b903","size_bytes":153890,"status":"published","expires_at":null}
+  ],
   "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.11","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":["git"]},
   "native_posture":{"status":"SOURCE_VERIFIED","release_eligible":null},
   "execution_readiness":{"state":"fail_closed","scope":"exact_range_check","blocker_codes":["ambient_git_not_bound","git_metadata_not_materialized","python_interpreter_not_included","python_stdlib_not_included"]},
