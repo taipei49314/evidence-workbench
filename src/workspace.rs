@@ -116,8 +116,14 @@ impl Workspace {
         let mut cursor = Some(start.as_path());
         while let Some(path) = cursor {
             let state = path.join(STATE_DIR);
-            if state.is_dir() {
-                return Ok(Some(path.to_owned()));
+            match fs::symlink_metadata(&state) {
+                Ok(_) => return Ok(Some(path.to_owned())),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("cannot inspect workspace state entry {}", state.display())
+                    });
+                }
             }
             if root.is_some() {
                 break;

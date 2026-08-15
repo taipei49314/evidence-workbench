@@ -616,6 +616,60 @@ fn doctor_stops_at_the_nearest_corrupt_workspace() {
 }
 
 #[test]
+fn doctor_does_not_skip_a_nearer_wrong_type_state_entry() {
+    let outer = TempDir::new().unwrap();
+    init(outer.path());
+    let outer_before = tree_snapshot(&outer.path().join(".ewb"));
+    let inner = outer.path().join("inner");
+    let nested = inner.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(inner.join(".ewb"), b"not a workspace directory\n").unwrap();
+
+    let (code, value, stderr) = run_json(ewb().current_dir(&nested).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], false);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_eq!(value["data"]["workspace_check"]["error"], "not_initialized");
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        inner.canonicalize().unwrap()
+    );
+    assert_eq!(outer_before, tree_snapshot(&outer.path().join(".ewb")));
+    assert_eq!(
+        fs::read(inner.join(".ewb")).unwrap(),
+        b"not a workspace directory\n"
+    );
+}
+
+#[test]
+fn doctor_does_not_skip_a_nearer_dangling_state_link() {
+    let outer = TempDir::new().unwrap();
+    init(outer.path());
+    let outer_before = tree_snapshot(&outer.path().join(".ewb"));
+    let inner = outer.path().join("inner");
+    let nested = inner.join("nested");
+    let link_target = outer.path().join("removed state target");
+    fs::create_dir_all(&nested).unwrap();
+    fs::create_dir(&link_target).unwrap();
+    create_directory_link(&link_target, &inner.join(".ewb"));
+    fs::remove_dir(&link_target).unwrap();
+
+    let (code, value, stderr) = run_json(ewb().current_dir(&nested).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], false);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_eq!(value["data"]["workspace_check"]["error"], "not_initialized");
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        inner.canonicalize().unwrap()
+    );
+    assert_eq!(outer_before, tree_snapshot(&outer.path().join(".ewb")));
+    assert!(fs::symlink_metadata(inner.join(".ewb")).is_ok());
+}
+
+#[test]
 fn upstream_registry_projects_twelve_production_pins_without_authority_or_shared_pass() {
     let production = manifests::production_all().unwrap();
     assert_eq!(production.len(), 12);
