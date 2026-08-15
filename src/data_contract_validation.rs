@@ -1,6 +1,6 @@
 use crate::contracts::{
-    CapsuleClosureState, CapsuleReadinessState, ContractArtifactRef, Digest, IdeHandoff,
-    PlatformAssumptionState, RuntimeCapsule, SubjectCandidate,
+    CapsuleClosureState, CapsuleReadinessState, ContractArtifactRef, Digest, EvidenceHandoff,
+    IdeHandoff, PlatformAssumptionState, RuntimeCapsule, SubjectCandidate,
 };
 use crate::strict_json;
 use anyhow::{Context, Result, bail};
@@ -24,6 +24,12 @@ pub fn parse_runtime_capsule(bytes: &[u8]) -> Result<RuntimeCapsule> {
 pub fn parse_ide_handoff(bytes: &[u8]) -> Result<IdeHandoff> {
     let handoff = parse_contract(bytes, "IDE handoff")?;
     validate_ide_handoff(&handoff)?;
+    Ok(handoff)
+}
+
+pub fn parse_evidence_handoff(bytes: &[u8]) -> Result<EvidenceHandoff> {
+    let handoff = parse_contract(bytes, "evidence handoff")?;
+    validate_evidence_handoff(&handoff)?;
     Ok(handoff)
 }
 
@@ -349,6 +355,31 @@ pub fn validate_ide_handoff(handoff: &IdeHandoff) -> Result<()> {
     Ok(())
 }
 
+pub fn validate_evidence_handoff(handoff: &EvidenceHandoff) -> Result<()> {
+    if handoff.schema_version != "evidence-handoff/v1" {
+        bail!("unsupported evidence handoff schema");
+    }
+    validate_prefixed_id(&handoff.handoff_id, "handoff_", "handoff id")?;
+    validate_timestamp(&handoff.created_at, "evidence handoff creation time")?;
+    validate_prefixed_id(
+        &handoff.producer_plan_ref.plan_id,
+        "plan_",
+        "producer plan id",
+    )?;
+    validate_sha256(
+        &handoff.producer_plan_ref.record_digest,
+        "producer plan record",
+    )?;
+    validate_prefixed_id(&handoff.producer_run_ref.run_id, "run_", "producer run id")?;
+    validate_sha256(
+        &handoff.producer_run_ref.record_digest,
+        "producer run record",
+    )?;
+    validate_artifact_id(&handoff.artifact_ref.artifact_id)?;
+    validate_sha256(&handoff.artifact_ref.record_digest, "artifact record")?;
+    Ok(())
+}
+
 fn validate_contract_artifact_ref(reference: &ContractArtifactRef, label: &str) -> Result<()> {
     validate_artifact_id(&reference.artifact_id)?;
     validate_digest(&reference.digest, label)
@@ -534,6 +565,8 @@ mod tests {
         include_bytes!("../contracts/examples/runtime-capsule-v1.example.json");
     const HANDOFF_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/ide-handoff-v1.example.json");
+    const EVIDENCE_HANDOFF_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/evidence-handoff-v1.example.json");
     const CLI_SUCCESS_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/ewb-cli-envelope-v1.success.example.json");
     const CLI_FAILURE_EXAMPLE: &[u8] =
@@ -544,6 +577,7 @@ mod tests {
         parse_subject_candidate(SUBJECT_EXAMPLE).expect("valid subject candidate example");
         parse_runtime_capsule(CAPSULE_EXAMPLE).expect("valid runtime capsule example");
         parse_ide_handoff(HANDOFF_EXAMPLE).expect("valid IDE handoff example");
+        parse_evidence_handoff(EVIDENCE_HANDOFF_EXAMPLE).expect("valid evidence handoff example");
         parse_cli_envelope(CLI_SUCCESS_EXAMPLE).expect("valid CLI success envelope example");
         parse_cli_envelope(CLI_FAILURE_EXAMPLE).expect("valid CLI failure envelope example");
     }
@@ -616,8 +650,17 @@ mod tests {
           "authority_effect":"none","argv":["cmd.exe"]
         }"#;
         assert!(parse_ide_handoff(handoff_with_argv).is_err());
+        let mut evidence_handoff: Value = serde_json::from_slice(EVIDENCE_HANDOFF_EXAMPLE).unwrap();
+        evidence_handoff["argv"] = json!(["cmd.exe"]);
+        assert!(parse_evidence_handoff(&serde_json::to_vec(&evidence_handoff).unwrap()).is_err());
         assert!(
             parse_subject_candidate(br#"{"schema_version":"a","schema_version":"b"}"#).is_err()
+        );
+        assert!(
+            parse_evidence_handoff(
+                br#"{"schema_version":"evidence-handoff/v1","schema_version":"evidence-handoff/v1"}"#
+            )
+            .is_err()
         );
     }
 
@@ -682,12 +725,105 @@ mod tests {
     }
 
     #[test]
+    fn evidence_handoff_is_closed_reference_only_and_non_authoritative() {
+        let parsed = parse_evidence_handoff(EVIDENCE_HANDOFF_EXAMPLE).unwrap();
+        assert_eq!(
+            parsed.relationship,
+            crate::contracts::EvidenceHandoffRelationship::CapturedRunArtifact
+        );
+        assert_eq!(
+            parsed.consumer_treatment,
+            crate::contracts::EvidenceConsumerTreatment::UntrustedExactBytes
+        );
+        assert_eq!(
+            parsed.authority_effect,
+            crate::contracts::ContractAuthorityEffect::None
+        );
+
+        for forbidden in [
+            "argv",
+            "command",
+            "parameters",
+            "capabilities",
+            "status",
+            "verdict",
+            "passed",
+            "score",
+            "authority",
+            "native_authority",
+            "artifact_sha256",
+            "byte_length",
+            "media_type",
+            "tool_ref",
+            "consumer_run_ref",
+            "accepted",
+            "ready",
+        ] {
+            let mut handoff: Value = serde_json::from_slice(EVIDENCE_HANDOFF_EXAMPLE).unwrap();
+            handoff[forbidden] = json!("forbidden");
+            assert!(
+                parse_evidence_handoff(&serde_json::to_vec(&handoff).unwrap()).is_err(),
+                "accepted forbidden field {forbidden}"
+            );
+        }
+
+        let invalid_mutations = [
+            ("/schema_version", json!("evidence-handoff/v2")),
+            ("/handoff_id", json!("handoff_NOT_LOWER_HEX")),
+            ("/created_at", json!("not-a-time")),
+            (
+                "/producer_plan_ref/plan_id",
+                json!("run_11111111111111111111111111111111"),
+            ),
+            ("/producer_plan_ref/record_digest", json!("11")),
+            (
+                "/producer_run_ref/run_id",
+                json!("plan_22222222222222222222222222222222"),
+            ),
+            ("/producer_run_ref/record_digest", json!("22")),
+            (
+                "/artifact_ref/artifact_id",
+                json!("artifact_ABCDEFABCDEFABCDEFABCDEFABCDEFAB"),
+            ),
+            ("/artifact_ref/record_digest", json!("33")),
+            ("/relationship", json!("derived_verdict")),
+            ("/consumer_treatment", json!("trusted_projection")),
+            ("/authority_effect", json!("reported")),
+        ];
+        for (pointer, replacement) in invalid_mutations {
+            let mut handoff: Value = serde_json::from_slice(EVIDENCE_HANDOFF_EXAMPLE).unwrap();
+            *handoff.pointer_mut(pointer).unwrap() = replacement;
+            assert!(
+                parse_evidence_handoff(&serde_json::to_vec(&handoff).unwrap()).is_err(),
+                "accepted invalid field {pointer}"
+            );
+        }
+
+        let mut nested_extra: Value = serde_json::from_slice(EVIDENCE_HANDOFF_EXAMPLE).unwrap();
+        nested_extra["producer_run_ref"]["status"] = json!("pass");
+        assert!(parse_evidence_handoff(&serde_json::to_vec(&nested_extra).unwrap()).is_err());
+
+        let mut trailing = EVIDENCE_HANDOFF_EXAMPLE.to_vec();
+        trailing.extend_from_slice(b" {}");
+        assert!(parse_evidence_handoff(&trailing).is_err());
+
+        let nested_duplicate = String::from_utf8(EVIDENCE_HANDOFF_EXAMPLE.to_vec())
+            .unwrap()
+            .replace(
+                "\"record_digest\": \"1111111111111111111111111111111111111111111111111111111111111111\"",
+                "\"record_digest\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"record_digest\": \"1111111111111111111111111111111111111111111111111111111111111111\"",
+            );
+        assert!(parse_evidence_handoff(nested_duplicate.as_bytes()).is_err());
+    }
+
+    #[test]
     fn every_new_schema_closes_all_object_shapes() {
         for raw in [
             include_str!("../contracts/subject-candidate-v1.schema.json"),
             include_str!("../contracts/runtime-capsule-v1.schema.json"),
             include_str!("../contracts/native-delivery-qualification-v1.schema.json"),
             include_str!("../contracts/ide-handoff-v1.schema.json"),
+            include_str!("../contracts/evidence-handoff-v1.schema.json"),
             include_str!("../contracts/build-identity-v1.schema.json"),
             include_str!("../contracts/ewb-cli-envelope-v1.schema.json"),
         ] {

@@ -636,6 +636,32 @@ pub enum CapsuleReadinessState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct EvidenceHandoff {
+    pub schema_version: String,
+    pub handoff_id: String,
+    pub created_at: String,
+    pub producer_plan_ref: PlanRecordRef,
+    pub producer_run_ref: RunRecordRef,
+    pub artifact_ref: ArtifactRecordRef,
+    pub relationship: EvidenceHandoffRelationship,
+    pub consumer_treatment: EvidenceConsumerTreatment,
+    pub authority_effect: ContractAuthorityEffect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceHandoffRelationship {
+    CapturedRunArtifact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceConsumerTreatment {
+    UntrustedExactBytes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct IdeHandoff {
     pub schema_version: String,
     pub handoff_id: String,

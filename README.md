@@ -283,6 +283,19 @@ ewb --json --workspace C:\evidence-workspace artifacts verify `
 
 Objects live at `.ewb/objects/sha256/<prefix>/<suffix>`. Records use generated ASCII IDs and content-addressed URIs. Import copies raw bytes while hashing, uses atomic commit, and stores an empty `transforms` list. JSON projections are never substituted for the native artifact.
 
+[`evidence-handoff/v1`](contracts/evidence-handoff-v1.schema.json) defines a
+closed, reference-only plan/run/artifact descriptor for future cross-audit
+transport. It fixes the relationship to `captured_run_artifact`, requires the
+consumer to treat the referenced artifact as `untrusted_exact_bytes`, and has
+`authority_effect: none`. This release intentionally has no handoff registry or
+handoff CLI command. Parsing the descriptor does not verify run-to-plan
+lineage, run membership of the artifact, or CAS bytes; an eventual registry
+must independently verify all of them. `ide-handoff/v1` remains available as a
+separate backward-compatible optional projection. The three `record_digest`
+values are EWB's compact typed-JSON digests of `PlanPayload`, `InstrumentRun`,
+and `ArtifactDescriptor`; they are not hashes of the enclosing record files.
+`handoff_id` is an opaque typed ID, not a content digest or authenticity proof.
+
 ## JSON and exit policy
 
 With `--json`, stdout contains exactly one JSON value. Native stdout/stderr are captured as artifacts and never mixed into EWB stdout.
@@ -318,6 +331,8 @@ credentials.
 - [`contracts/native-delivery-qualification-v1.schema.json`](contracts/native-delivery-qualification-v1.schema.json)
 - [`contracts/build-identity-v1.schema.json`](contracts/build-identity-v1.schema.json)
 - [`contracts/ewb-cli-envelope-v1.schema.json`](contracts/ewb-cli-envelope-v1.schema.json)
+- [`contracts/evidence-handoff-v1.schema.json`](contracts/evidence-handoff-v1.schema.json)
+- [`contracts/ide-handoff-v1.schema.json`](contracts/ide-handoff-v1.schema.json)
 
 The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or aggregate result field. A native projection carries its own namespace, value, `projection_only: true`, artifact ID, and exact locator. In `instrument_run/v1`, `native_authority` is schema-constrained to `not_reported`, and artifact `source_run_id` is constrained to `null` rather than asserting unverified lineage; either feature requires a new contract version with native rebinding rather than widening v1 in place.
 
