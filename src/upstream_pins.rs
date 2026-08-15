@@ -587,6 +587,38 @@ mod tests {
     }
 
     #[test]
+    fn greenwash_embedded_pin_is_exact_fail_closed_and_non_authoritative() {
+        let trusted = get_for_tool("greenwash").unwrap();
+        assert!(!trusted.raw.as_bytes().contains(&b'\r'));
+        assert_eq!(
+            trusted.sha256,
+            "9615314a143a0fd467c30609e4aeaa74b20a14a31300d0b6ea38c679196e5e05"
+        );
+        assert_eq!(
+            trusted.pin.source.commit_sha,
+            "bd33898ddf7396054ce58d438ff02934bcf7e27b"
+        );
+        assert_eq!(
+            trusted.pin.source.tree_sha,
+            "fee1e8ca956f0a6a66632376de3f8893b195e915"
+        );
+        assert_eq!(trusted.pin.software_version, "0.1.41");
+        assert!(trusted.pin.release.is_none());
+        assert_eq!(trusted.pin.evidence.len(), 1);
+        assert_eq!(trusted.pin.evidence[0].kind, EvidenceKind::WorkflowRun);
+        assert_eq!(trusted.pin.evidence[0].id, "31867786471");
+        assert_eq!(trusted.pin.evidence[0].status, EvidenceStatus::Success);
+        assert_eq!(
+            trusted.pin.execution_readiness.state,
+            ReadinessState::FailClosed
+        );
+        assert_eq!(
+            trusted.pin.admission.authority_effect,
+            AuthorityEffect::None
+        );
+    }
+
+    #[test]
     fn unknown_fields_and_authority_laundering_are_rejected() {
         let trusted = get_for_tool("unasked").unwrap();
         let mut unknown: Value = serde_json::from_str(trusted.raw).unwrap();
