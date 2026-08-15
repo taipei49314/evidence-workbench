@@ -2819,46 +2819,51 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
     let source = root.join("concurrent.bin");
     let bytes = b"one immutable object, many records\0\xff";
     fs::write(&source, bytes).unwrap();
-    let mut children = Vec::new();
-    for _ in 0..12 {
-        children.push(
-            ProcessCommand::new(binary("ewb"))
-                .args(["--json", "--workspace"])
-                .arg(&root)
-                .args(["artifacts", "add", "--file"])
-                .arg(&source)
-                .args(["--role", "concurrent_fixture"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap(),
-        );
-    }
+    const COHORTS: usize = 4;
+    const CHILDREN_PER_COHORT: usize = 24;
     let mut ids = std::collections::BTreeSet::new();
     let mut digests = std::collections::BTreeSet::new();
-    for child in children {
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "artifact child failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-        ids.insert(value["data"]["artifact_id"].as_str().unwrap().to_owned());
-        digests.insert(
-            value["data"]["digest"]["value"]
-                .as_str()
-                .unwrap()
-                .to_owned(),
-        );
+    for _ in 0..COHORTS {
+        let mut children = Vec::new();
+        for _ in 0..CHILDREN_PER_COHORT {
+            children.push(
+                ProcessCommand::new(binary("ewb"))
+                    .args(["--json", "--workspace"])
+                    .arg(&root)
+                    .args(["artifacts", "add", "--file"])
+                    .arg(&source)
+                    .args(["--role", "concurrent_fixture"])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap(),
+            );
+        }
+        for child in children {
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "artifact child failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+            ids.insert(value["data"]["artifact_id"].as_str().unwrap().to_owned());
+            digests.insert(
+                value["data"]["digest"]["value"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
     }
-    assert_eq!(ids.len(), 12);
+    let expected_records = COHORTS * CHILDREN_PER_COHORT;
+    assert_eq!(ids.len(), expected_records);
     assert_eq!(digests.len(), 1);
     assert_eq!(
         fs::read_dir(root.join(".ewb/artifacts")).unwrap().count(),
-        12
+        expected_records
     );
     assert_eq!(fs::read_dir(root.join(".ewb/tmp")).unwrap().count(), 0);
 }
