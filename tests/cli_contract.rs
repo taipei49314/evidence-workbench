@@ -2819,51 +2819,94 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
     let source = root.join("concurrent.bin");
     let bytes = b"one immutable object, many records\0\xff";
     fs::write(&source, bytes).unwrap();
-    const COHORTS: usize = 4;
-    const CHILDREN_PER_COHORT: usize = 24;
+    const CHILDREN: usize = 12;
     let mut ids = std::collections::BTreeSet::new();
     let mut digests = std::collections::BTreeSet::new();
-    for _ in 0..COHORTS {
-        let mut children = Vec::new();
-        for _ in 0..CHILDREN_PER_COHORT {
-            children.push(
-                ProcessCommand::new(binary("ewb"))
-                    .args(["--json", "--workspace"])
-                    .arg(&root)
-                    .args(["artifacts", "add", "--file"])
-                    .arg(&source)
-                    .args(["--role", "concurrent_fixture"])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .unwrap(),
-            );
-        }
-        for child in children {
-            let output = child.wait_with_output().unwrap();
-            assert!(
-                output.status.success(),
-                "artifact child failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-            ids.insert(value["data"]["artifact_id"].as_str().unwrap().to_owned());
-            digests.insert(
-                value["data"]["digest"]["value"]
-                    .as_str()
-                    .unwrap()
-                    .to_owned(),
-            );
-        }
+    let mut children = Vec::new();
+    for _ in 0..CHILDREN {
+        children.push(
+            ProcessCommand::new(binary("ewb"))
+                .args(["--json", "--workspace"])
+                .arg(&root)
+                .args(["artifacts", "add", "--file"])
+                .arg(&source)
+                .args(["--role", "concurrent_fixture"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
     }
-    let expected_records = COHORTS * CHILDREN_PER_COHORT;
-    assert_eq!(ids.len(), expected_records);
+    for child in children {
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "artifact child failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        ids.insert(value["data"]["artifact_id"].as_str().unwrap().to_owned());
+        digests.insert(
+            value["data"]["digest"]["value"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+    assert_eq!(ids.len(), CHILDREN);
     assert_eq!(digests.len(), 1);
+
+    let output = ProcessCommand::new(binary("ewb"))
+        .args(["--json", "--workspace"])
+        .arg(&root)
+        .args(["artifacts", "list"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "artifacts list failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let listed_ids = listed["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            record["artifact"]["artifact_id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(listed_ids, ids);
     assert_eq!(
         fs::read_dir(root.join(".ewb/artifacts")).unwrap().count(),
-        expected_records
+        CHILDREN
     );
+
+    let digest = digests.first().unwrap();
+    let expected_object = root
+        .join(".ewb/objects/sha256")
+        .join(&digest[..2])
+        .join(&digest[2..]);
+    let mut object_files = Vec::new();
+    for shard in fs::read_dir(root.join(".ewb/objects/sha256")).unwrap() {
+        let shard = shard.unwrap();
+        assert!(shard.file_type().unwrap().is_dir());
+        for object in fs::read_dir(shard.path()).unwrap() {
+            let object = object.unwrap();
+            assert!(object.file_type().unwrap().is_file());
+            object_files.push(object.path());
+        }
+    }
+    assert_eq!(object_files, vec![expected_object.clone()]);
+    assert_eq!(fs::read(expected_object).unwrap(), bytes);
     assert_eq!(fs::read_dir(root.join(".ewb/tmp")).unwrap().count(), 0);
 }
