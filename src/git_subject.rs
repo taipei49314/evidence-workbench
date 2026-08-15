@@ -708,10 +708,14 @@ pub fn validate_planned_snapshot(
     if Path::new(&git.staged_path) != expected_staged {
         bail!("Git plan launcher staged path is outside its content-addressed location");
     }
-    let (staged_digest, staged_length) = crate::workspace::digest_file(&expected_staged)?;
-    if staged_digest != git.source_sha256 || staged_length != git.source_size_bytes {
-        bail!("staged Git plan launcher bytes do not match recorded identity");
-    }
+    crate::workspace::verify_private_file(
+        &expected_staged,
+        &git.source_sha256,
+        git.source_size_bytes,
+    )
+    .context(
+        "staged Git plan launcher bytes do not match recorded identity or private single-link contract",
+    )?;
     Ok(())
 }
 

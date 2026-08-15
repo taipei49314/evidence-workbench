@@ -1,4 +1,6 @@
-use evidence_workbench::native_qualifications::{admit, executable_artifact, load_verified};
+use evidence_workbench::native_qualifications::{
+    admit, executable_artifact, list_verified, load_verified,
+};
 use evidence_workbench::workspace::{self, Workspace};
 use std::fs;
 use std::io::{Cursor, Write};
@@ -57,6 +59,7 @@ fn exact_candidate_admits_reloads_and_rejects_record_tamper() {
         "qualification_6813f0009eda332b202be9f5b2bbc925"
     );
     load_verified(&workspace, &record.qualification_id).unwrap();
+    assert_eq!(list_verified(&workspace).unwrap(), vec![record.clone()]);
 
     let mut forged = record.clone();
     forged.payload.qualification.declared_at = "2026-08-14T00:00:00Z".to_owned();
@@ -70,6 +73,7 @@ fn exact_candidate_admits_reloads_and_rejects_record_tamper() {
     )
     .unwrap();
     assert!(load_verified(&workspace, &forged.qualification_id).is_err());
+    assert!(list_verified(&workspace).is_err());
 }
 
 #[test]

@@ -102,6 +102,28 @@ fn validate_source_plan_lineage(workspace: &Workspace, run: &InstrumentRun) -> R
 }
 
 pub fn validate_plan(workspace: &Workspace, plan_id: &str, plan: &PlanPayload) -> Result<()> {
+    validate_plan_inner(workspace, plan_id, plan, true)
+}
+
+/// Re-derive the durable record and local-reference bindings of a stored plan
+/// without asserting that the current host is allowed to execute it.
+///
+/// Execution must continue to use `validate_plan`, which additionally enforces
+/// the host execution boundary and qualification preflight.
+pub fn validate_plan_record(
+    workspace: &Workspace,
+    plan_id: &str,
+    plan: &PlanPayload,
+) -> Result<()> {
+    validate_plan_inner(workspace, plan_id, plan, false)
+}
+
+fn validate_plan_inner(
+    workspace: &Workspace,
+    plan_id: &str,
+    plan: &PlanPayload,
+    execution_preflight: bool,
+) -> Result<()> {
     workspace::validate_prefixed_id(plan_id, "plan_")?;
     let trusted = manifests::get_by_ref(&plan.tool_ref)?;
     let manifest = &trusted.manifest;
@@ -111,9 +133,11 @@ pub fn validate_plan(workspace: &Workspace, plan_id: &str, plan: &PlanPayload) -
     if manifest.identity_contract.python_distribution.is_some() {
         bail!("plan uses a Python adapter whose immutable runtime snapshot is not implemented");
     }
-    require_windows_execution_boundary(
-        "native execution plans are unsupported until descriptor-based exec is implemented",
-    )?;
+    if execution_preflight {
+        require_windows_execution_boundary(
+            "native execution plans are unsupported until descriptor-based exec is implemented",
+        )?;
+    }
 
     if plan.adapter.id != manifest.adapter.id || plan.adapter.version != manifest.adapter.version {
         bail!("plan adapter identity does not match its embedded manifest");
@@ -133,7 +157,7 @@ pub fn validate_plan(workspace: &Workspace, plan_id: &str, plan: &PlanPayload) -
         &plan.resolved_tool_identity,
         &manifest.invocation_contract.operation,
         Some(plan_id),
-        true,
+        execution_preflight,
     )?;
     validate_subject(workspace, &plan.subject, manifest)?;
     let expected_root = workspace.execution_path(plan_id)?;
@@ -300,10 +324,9 @@ fn validate_tool_identity(
     {
         bail!("staged executable path is outside its content-addressed location");
     }
-    let (staged_digest, staged_length) = workspace::digest_file(staged_path)?;
-    if staged_digest != identity.sha256 || staged_length != identity.size_bytes {
-        bail!("staged executable bytes do not match recorded identity");
-    }
+    workspace::verify_private_file(staged_path, &identity.sha256, identity.size_bytes).context(
+        "staged executable bytes do not match recorded identity or private single-link contract",
+    )?;
     Ok(())
 }
 

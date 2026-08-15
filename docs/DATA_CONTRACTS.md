@@ -3,6 +3,15 @@
 These contracts are transport boundaries. They do not create a shared verdict or
 authority.
 
+- `ewb-cli-envelope/v1` closes the common `--json` success and failure objects
+  without changing the established CLI bytes. Its version is selected out of
+  band rather than carried in a new top-level field. Success contains exactly
+  `ok`, `command`, and opaque command-owned `data`; failure contains exactly
+  `ok` and a closed `error` object with `code` and `message`. The envelope's
+  `ok` reports EWB command completion, never a native result, aggregate verdict,
+  or authority claim. Process exit remains a separate transport signal; in
+  particular, `runs execute` can commit an `ok: true` run envelope and exit `4`
+  when the native process did not exit normally.
 - `subject-candidate/v1` carries an untrusted `github-radar` discovery. EWB must
   independently resolve the exact commit and tree before admission. Its
   `candidate_id` is the first 128 bits of SHA-256 over the NUL-joined schema,

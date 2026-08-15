@@ -2,6 +2,7 @@ use assert_cmd::Command;
 #[cfg(windows)]
 use evidence_workbench::contracts::PlanRecord;
 use evidence_workbench::contracts::RuntimeCapsule;
+use evidence_workbench::data_contract_validation::parse_cli_envelope;
 use evidence_workbench::manifests;
 use evidence_workbench::workspace::digest_serialized;
 use serde_json::{Value, json};
@@ -102,9 +103,8 @@ fn run_json(command: &mut Command) -> (i32, Value, String) {
     let code = output.status.code().unwrap_or(-999);
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 JSON stdout");
     let stderr = String::from_utf8(output.stderr).expect("UTF-8 stderr");
-    let value: Value = serde_json::from_str(&stdout).unwrap_or_else(|error| {
-        panic!("stdout is not exactly one JSON value: {error}: {stdout:?}")
-    });
+    let value = parse_cli_envelope(stdout.as_bytes())
+        .unwrap_or_else(|error| panic!("stdout violates ewb-cli-envelope/v1: {error}: {stdout:?}"));
     (code, value, stderr)
 }
 
@@ -296,6 +296,76 @@ fn json_mode_wraps_argument_errors_without_stderr_noise() {
     assert_eq!(code, 2);
     assert_eq!(value["ok"], false);
     assert!(stderr.is_empty(), "stderr was not pure: {stderr:?}");
+}
+
+#[test]
+fn json_envelope_bytes_keep_the_established_success_and_failure_serialization() {
+    for factory in [ewb as fn() -> Command, production_ewb as fn() -> Command] {
+        let success = factory()
+            .args(["--json", "--version"])
+            .output()
+            .expect("run JSON version command");
+        assert_eq!(success.status.code(), Some(0));
+        assert!(success.stderr.is_empty());
+        assert_eq!(
+            String::from_utf8(success.stdout).unwrap(),
+            format!(
+                "{{\"command\":\"help\",\"data\":{{\"text\":\"ewb {}\\n\"}},\"ok\":true}}\n",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+
+        let failure = factory()
+            .args(["--json", "tools", "show", "does-not-exist"])
+            .output()
+            .expect("run JSON failure command");
+        assert_eq!(failure.status.code(), Some(2));
+        assert!(failure.stderr.is_empty());
+        assert_eq!(
+            String::from_utf8(failure.stdout).unwrap(),
+            "{\"error\":{\"code\":\"command_failed\",\"message\":\"unknown trusted tool manifest: does-not-exist\"},\"ok\":false}\n"
+        );
+    }
+}
+
+#[test]
+fn read_only_registry_lists_are_empty_and_fail_atomically_on_unexpected_entries() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+
+    for (directory, command, logical_command) in [
+        ("plans", "plans", "plans.list"),
+        ("artifacts", "artifacts", "artifacts.list"),
+        ("qualifications", "qualifications", "qualifications.list"),
+    ] {
+        let (code, value, stderr) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args([command, "list"]),
+        );
+        assert_eq!(code, 0, "{value:?} {stderr}");
+        assert_eq!(value["command"], logical_command);
+        assert_eq!(value["data"], json!([]));
+
+        let unexpected = temp.path().join(".ewb").join(directory).join("README");
+        fs::write(&unexpected, b"not a registry record").unwrap();
+        let (code, failure, stderr) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args([command, "list"]),
+        );
+        assert_eq!(code, 2, "{failure:?} {stderr}");
+        assert_eq!(failure["ok"], false);
+        assert!(
+            failure["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("unexpected file")
+        );
+        fs::remove_file(unexpected).unwrap();
+    }
 }
 
 #[test]
@@ -1169,6 +1239,73 @@ fn artifact_store_preserves_arbitrary_bytes_and_detects_tampering() {
         .join(&digest[2..]);
     assert_eq!(fs::read(&object).unwrap(), bytes);
 
+    let (code, shown, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", "show", id]),
+    );
+    assert_eq!(code, 0, "{shown:?} {stderr}");
+    assert_eq!(shown["data"]["artifact"], *artifact);
+    assert_eq!(shown["data"]["record_digest"].as_str().unwrap().len(), 64);
+
+    let (code, listed, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["data"], json!([shown["data"].clone()]));
+
+    let record_path = temp
+        .path()
+        .join(".ewb/artifacts")
+        .join(format!("{id}.json"));
+    let external_link = temp.path().join("external-artifact-record.json");
+    fs::hard_link(&record_path, &external_link).unwrap();
+    for subcommand in ["show", "list"] {
+        let mut command = ewb();
+        command
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", subcommand]);
+        if subcommand == "show" {
+            command.arg(id);
+        }
+        let (code, failure, stderr) = run_json(&mut command);
+        assert_eq!(code, 2, "{failure:?} {stderr}");
+        assert!(
+            failure["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("single-link")
+        );
+    }
+    fs::remove_file(external_link).unwrap();
+
+    let external_object_link = temp.path().join("external-artifact-object");
+    fs::hard_link(&object, &external_object_link).unwrap();
+    for subcommand in ["show", "list"] {
+        let mut command = ewb();
+        command
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", subcommand]);
+        if subcommand == "show" {
+            command.arg(id);
+        }
+        let (code, failure, stderr) = run_json(&mut command);
+        assert_eq!(code, 2, "{failure:?} {stderr}");
+        assert!(
+            failure["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("single-link")
+        );
+    }
+    fs::remove_file(external_object_link).unwrap();
+
     let (code, verified, stderr) = run_json(
         ewb()
             .args(["--json", "--workspace"])
@@ -1186,6 +1323,15 @@ fn artifact_store_preserves_arbitrary_bytes_and_detects_tampering() {
             .args(["artifacts", "verify", id]),
     );
     assert_ne!(code, 0);
+    assert_eq!(failure["ok"], false);
+
+    let (code, failure, _) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", "list"]),
+    );
+    assert_eq!(code, 2, "{failure:?}");
     assert_eq!(failure["ok"], false);
 }
 
@@ -1510,6 +1656,61 @@ fn plan_never_launches_native_tool_and_execute_preserves_native_block() {
     let plan_id = planned["data"]["plan_id"].as_str().unwrap();
     let plan_digest = planned["data"]["record_digest"].as_str().unwrap();
 
+    let (code, shown, stderr) = run_json(
+        ewb()
+            .env("PATH", test_path(&fake_dir))
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["plans", "show", plan_id]),
+    );
+    assert_eq!(code, 0, "{shown:?} {stderr}");
+    assert_eq!(shown["data"], planned["data"]);
+    let (code, listed, stderr) = run_json(
+        ewb()
+            .env("PATH", test_path(&fake_dir))
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["plans", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["data"], json!([planned["data"].clone()]));
+
+    let staged_native = PathBuf::from(
+        planned["data"]["payload"]["resolved_tool_identity"]["path"]
+            .as_str()
+            .unwrap(),
+    );
+    let staged_git = PathBuf::from(
+        planned["data"]["payload"]["subject"]["snapshot"]["git_plan_tool"]["staged_path"]
+            .as_str()
+            .unwrap(),
+    );
+    for (index, staged) in [staged_native, staged_git].into_iter().enumerate() {
+        let external_link = temp.path().join(format!("external-staged-link-{index}"));
+        fs::hard_link(staged, &external_link).unwrap();
+        for subcommand in ["show", "list"] {
+            let mut command = ewb();
+            command
+                .env("PATH", test_path(&fake_dir))
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["plans", subcommand]);
+            if subcommand == "show" {
+                command.arg(plan_id);
+            }
+            let (code, failure, stderr) = run_json(&mut command);
+            assert_eq!(code, 2, "{failure:?} {stderr}");
+            assert!(
+                failure["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("single-link"),
+                "{failure:?}"
+            );
+        }
+        fs::remove_file(external_link).unwrap();
+    }
+
     let (missing_code, missing, _) = run_json(
         ewb()
             .env("PATH", test_path(&fake_dir))
@@ -1732,6 +1933,26 @@ fn execute_requires_the_reviewed_plan_digest_and_revalidates_plan_semantics() {
     record.payload.invocation.argv.push("--forged".to_owned());
     record.record_digest = digest_serialized(&record.payload).unwrap();
     fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+
+    for subcommand in ["show", "list"] {
+        let mut command = ewb();
+        command
+            .env("PATH", test_path(&fake_dir))
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["plans", subcommand]);
+        if subcommand == "show" {
+            command.arg(plan_id);
+        }
+        let (code, failure, stderr) = run_json(&mut command);
+        assert_eq!(code, 2, "{failure:?} {stderr}");
+        assert!(
+            failure["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("trusted adapter contract")
+        );
+    }
 
     let execute = |digest: &str| {
         run_json(

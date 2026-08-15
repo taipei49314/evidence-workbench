@@ -200,6 +200,19 @@ impl Workspace {
         Ok(record)
     }
 
+    pub fn load_plan_verified(&self, plan_id: &str) -> Result<PlanRecord> {
+        let record = self.load_plan(plan_id)?;
+        run_validation::validate_plan_record(self, plan_id, &record.payload)?;
+        Ok(record)
+    }
+
+    pub fn list_plans_verified(&self) -> Result<Vec<PlanRecord>> {
+        registry_record_ids(&self.state.join("plans"), "plan_", "plan")?
+            .into_iter()
+            .map(|plan_id| self.load_plan_verified(&plan_id))
+            .collect()
+    }
+
     pub fn write_run(&self, run: crate::contracts::InstrumentRun) -> Result<RunRecord> {
         run_validation::validate(self, &run)?;
         let digest = digest_serialized(&run)?;
@@ -245,6 +258,17 @@ impl Workspace {
             bail!("native delivery qualification record identity or digest mismatch");
         }
         Ok(record)
+    }
+
+    pub fn list_native_qualifications(&self) -> Result<Vec<NativeDeliveryQualificationRecord>> {
+        registry_record_ids(
+            &self.state.join("qualifications"),
+            "qualification_",
+            "native qualification",
+        )?
+        .into_iter()
+        .map(|qualification_id| self.load_native_qualification(&qualification_id))
+        .collect()
     }
 
     pub fn load_run(&self, run_id: &str) -> Result<RunRecord> {
@@ -519,6 +543,13 @@ impl Workspace {
         }
         self.verify_descriptor(&record.artifact)?;
         Ok(record)
+    }
+
+    pub fn list_artifacts(&self) -> Result<Vec<ArtifactRecord>> {
+        registry_record_ids(&self.state.join("artifacts"), "artifact_", "artifact")?
+            .into_iter()
+            .map(|artifact_id| self.load_artifact(&artifact_id))
+            .collect()
     }
 
     pub fn verify_descriptor(&self, descriptor: &ArtifactDescriptor) -> Result<PathBuf> {
@@ -837,6 +868,13 @@ pub fn digest_file(path: &Path) -> Result<(String, u64)> {
     Ok((hex::encode(hasher.finalize()), length))
 }
 
+/// Re-hash an EWB-owned private file while holding one read handle (without
+/// write/delete sharing on Windows) and requiring that no second hard-link
+/// name exists.
+pub fn verify_private_file(path: &Path, expected_digest: &str, expected_length: u64) -> Result<()> {
+    verify_file(path, expected_digest, expected_length)
+}
+
 pub fn digest_serialized<T: Serialize>(value: &T) -> Result<String> {
     let bytes = serde_json::to_vec(value)?;
     Ok(hex::encode(Sha256::digest(bytes)))
@@ -876,13 +914,44 @@ pub fn validate_sha256(value: &str) -> Result<()> {
 }
 
 fn read_strict_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file() || is_reparse(&metadata) {
-        bail!("record must be a regular non-link file");
+    let path_metadata = fs::symlink_metadata(path)?;
+    if !path_metadata.is_file() || is_reparse(&path_metadata) {
+        bail!("record must be a regular single-link file");
     }
-    let bytes = fs::read(path)?;
+    let mut file = open_artifact_read_no_write_share(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || is_reparse(&metadata) || !file_has_single_link(&file, &metadata)? {
+        bail!("record must be a regular single-link file");
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
     let value = strict_json::parse_strict(&bytes)?;
     Ok(serde_json::from_value(value)?)
+}
+
+fn registry_record_ids(directory: &Path, prefix: &str, label: &str) -> Result<Vec<String>> {
+    validate_real_dir(directory)?;
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_file() || is_reparse(&metadata) {
+            bail!("{label} registry may contain only regular non-link JSON files");
+        }
+        let filename = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("{label} registry contains a non-UTF-8 filename"))?;
+        let id = filename
+            .strip_suffix(".json")
+            .ok_or_else(|| anyhow::anyhow!("{label} registry contains an unexpected file"))?;
+        validate_prefixed_id(id, prefix)
+            .with_context(|| format!("{label} registry contains an invalid record filename"))?;
+        ids.push(id.to_owned());
+    }
+    ids.sort();
+    Ok(ids)
 }
 
 fn ensure_real_dir(path: &Path) -> Result<()> {
@@ -983,8 +1052,57 @@ fn is_reparse(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
+#[cfg(windows)]
+fn file_has_single_link(file: &File, _metadata: &fs::Metadata) -> Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: file owns a live Windows file handle and information is writable.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    if ok == 0 {
+        bail!("cannot query file link identity");
+    }
+    Ok(information.nNumberOfLinks == 1)
+}
+
+#[cfg(unix)]
+fn file_has_single_link(_file: &File, metadata: &fs::Metadata) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(metadata.nlink() == 1)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_has_single_link(_file: &File, _metadata: &fs::Metadata) -> Result<bool> {
+    Ok(false)
+}
+
 fn verify_file(path: &Path, expected_digest: &str, expected_length: u64) -> Result<()> {
-    let (actual_digest, actual_length) = digest_file(path)?;
+    let path_metadata = fs::symlink_metadata(path)?;
+    if !path_metadata.is_file() || is_reparse(&path_metadata) {
+        bail!("private file must be a regular single-link file");
+    }
+    let mut file = open_artifact_read_no_write_share(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || is_reparse(&metadata) || !file_has_single_link(&file, &metadata)? {
+        bail!("private file must be a regular single-link file");
+    }
+    let mut hasher = Sha256::new();
+    let mut actual_length = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        actual_length = actual_length
+            .checked_add(read as u64)
+            .ok_or_else(|| anyhow::anyhow!("private file byte length overflow"))?;
+    }
+    let actual_digest = hex::encode(hasher.finalize());
     if actual_digest != expected_digest || actual_length != expected_length {
         bail!("artifact bytes do not match their recorded digest and length");
     }
@@ -992,10 +1110,14 @@ fn verify_file(path: &Path, expected_digest: &str, expected_length: u64) -> Resu
 }
 
 fn read_verified_file(path: &Path, expected_digest: &str, expected_length: u64) -> Result<Vec<u8>> {
+    let path_metadata = fs::symlink_metadata(path)?;
+    if !path_metadata.is_file() || is_reparse(&path_metadata) {
+        bail!("artifact object is not a regular single-link file");
+    }
     let mut file = open_artifact_read_no_write_share(path)?;
     let metadata = file.metadata()?;
-    if !metadata.is_file() || is_reparse(&metadata) {
-        bail!("artifact object is not a regular non-link file");
+    if !metadata.is_file() || is_reparse(&metadata) || !file_has_single_link(&file, &metadata)? {
+        bail!("artifact object is not a regular single-link file");
     }
     if metadata.len() != expected_length {
         bail!("artifact bytes do not match their recorded digest and length");
