@@ -699,7 +699,8 @@ pub fn execute(
         parameters,
         invocation,
     } = request;
-    let (materialized_subject, execution_root) = materialize_subject(workspace, &subject)?;
+    let (materialized_subject, execution_root) =
+        materialize_subject(workspace, &source_plan_ref.plan_id, &subject)?;
     let mut execution_guard = ExecutionRootGuard {
         workspace,
         root: execution_root,
@@ -811,6 +812,7 @@ pub fn execute(
 
 fn materialize_subject(
     workspace: &Workspace,
+    plan_id: &str,
     subject: &Subject,
 ) -> Result<(Subject, Option<PathBuf>)> {
     match subject {
@@ -818,30 +820,32 @@ fn materialize_subject(
             let root = git_subject::materialize(workspace, subject)?;
             Ok((subject.clone(), Some(root)))
         }
-        Subject::Artifact { snapshot, .. } => {
-            let record = workspace.load_artifact(&snapshot.artifact_id)?;
-            if record.artifact.digest.value != snapshot.sha256
+        Subject::Artifact {
+            sha256,
+            byte_length,
+            media_type,
+            source_artifact_id,
+            snapshot,
+            ..
+        } => {
+            let execution_root = workspace.execution_path(plan_id)?;
+            let expected_destination = execution_root.join("input");
+            if Path::new(&snapshot.execution_path) != expected_destination {
+                bail!("artifact snapshot execution path does not match its source plan");
+            }
+            let record = workspace.load_artifact(source_artifact_id)?;
+            if record.artifact.artifact_id != snapshot.artifact_id
+                || record.artifact.digest.value != *sha256
+                || record.artifact.digest.value != snapshot.sha256
+                || record.artifact.byte_length != *byte_length
                 || record.artifact.byte_length != snapshot.byte_length
+                || record.artifact.media_type != *media_type
             {
                 bail!("artifact snapshot identity mismatch");
             }
-            let source = workspace.verify_descriptor(&record.artifact)?;
-            let destination = PathBuf::from(&snapshot.execution_path);
-            let root = destination
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("artifact execution path has no parent"))?;
-            if root.exists() {
-                bail!("planned artifact execution root already exists");
-            }
-            fs::create_dir(root)?;
-            fs::copy(source, &destination)?;
-            workspace::digest_file(&destination).and_then(|(digest, length)| {
-                if digest != snapshot.sha256 || length != snapshot.byte_length {
-                    bail!("artifact execution copy mismatch")
-                }
-                Ok(())
-            })?;
-            Ok((subject.clone(), Some(root.to_owned())))
+            let _destination =
+                workspace.materialize_artifact_execution_input(plan_id, &record.artifact)?;
+            Ok((subject.clone(), Some(execution_root)))
         }
         Subject::SelfFoundation { .. } => Ok((subject.clone(), None)),
     }
@@ -879,7 +883,7 @@ fn rewrite_invocation_subject(
     Ok(())
 }
 
-fn verify_subject_after(workspace: &Workspace, subject: &Subject) -> Result<()> {
+fn verify_subject_after(_workspace: &Workspace, subject: &Subject) -> Result<()> {
     match subject {
         Subject::Git { .. } => git_subject::verify_materialized(subject),
         Subject::Artifact {
@@ -887,14 +891,12 @@ fn verify_subject_after(workspace: &Workspace, subject: &Subject) -> Result<()> 
             byte_length,
             snapshot,
             ..
-        } => {
-            let (actual, length) = workspace::digest_file(Path::new(&snapshot.execution_path))?;
-            if &actual != sha256 || &length != byte_length {
-                bail!("artifact subject changed during execution");
-            }
-            let _ = workspace;
-            Ok(())
-        }
+        } => workspace::verify_private_file(
+            Path::new(&snapshot.execution_path),
+            sha256,
+            *byte_length,
+        )
+        .context("artifact subject changed during execution"),
         Subject::SelfFoundation { .. } => Ok(()),
     }
 }

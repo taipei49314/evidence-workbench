@@ -213,13 +213,26 @@ pub enum RunsSubcommand {
         #[arg(long)]
         tool: String,
         /// Clean Git subject for git-scoped adapters.
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", conflicts_with = "input_artifact")]
         subject: Option<PathBuf>,
-        /// Exact input artifact for artifact-scoped adapters.
-        #[arg(long, value_name = "FILE")]
+        /// Import an exact input file for artifact-scoped adapters.
+        #[arg(long, value_name = "FILE", conflicts_with = "input_artifact")]
         input: Option<PathBuf>,
-        #[arg(long, default_value = "application/json")]
-        input_media_type: String,
+        /// Reuse one verified artifact already stored in this workspace.
+        #[arg(
+            long,
+            value_name = "ARTIFACT_ID",
+            conflicts_with_all = ["subject", "input"]
+        )]
+        input_artifact: Option<String>,
+        /// Media type for a newly imported --input file (defaults to application/json).
+        #[arg(
+            long,
+            value_name = "MEDIA_TYPE",
+            requires = "input",
+            conflicts_with = "input_artifact"
+        )]
+        input_media_type: Option<String>,
         /// Adapter parameter in NAME=VALUE form. Only manifest-declared names are accepted.
         #[arg(long = "param", value_name = "NAME=VALUE")]
         parameters: Vec<String>,
@@ -622,6 +635,7 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
             tool,
             subject,
             input,
+            input_artifact,
             input_media_type,
             parameters,
             timeout_ms,
@@ -662,6 +676,20 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
                 &manifest.manifest.manifest_id,
                 &manifest.manifest.invocation_contract.operation,
             )?;
+            validate_plan_subject_arguments(
+                &manifest.manifest.subject_kind,
+                subject.as_deref(),
+                input.as_deref(),
+                input_artifact.as_deref(),
+                input_media_type.as_deref(),
+            )?;
+            // Re-verify a reused registry record and its CAS object before any
+            // native identity snapshot can write. write_plan's semantic
+            // validator reloads the binding after the remaining preflight.
+            let reused_artifact = input_artifact
+                .as_deref()
+                .map(|artifact_id| workspace.load_artifact(artifact_id))
+                .transpose()?;
             // Fail closed on an unsnapshottable runtime before creating subject artifacts.
             let identity = if let Some(reference) = &native_qualification_ref {
                 let qualification =
@@ -687,7 +715,8 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
                 &manifest.manifest.manifest_id,
                 subject.as_deref(),
                 input.as_deref(),
-                input_media_type,
+                reused_artifact.as_ref().map(|record| &record.artifact),
+                input_media_type.as_deref(),
                 parameters.get("base_revision").map(String::as_str),
                 planned_git.as_ref(),
             )?;
@@ -891,14 +920,15 @@ fn resolve_plan_subject(
     manifest_id: &str,
     subject: Option<&Path>,
     input: Option<&Path>,
-    input_media_type: &str,
+    input_artifact: Option<&ArtifactDescriptor>,
+    input_media_type: Option<&str>,
     base_revision: Option<&str>,
     planned_git: Option<&git_subject::PlannedGit>,
 ) -> Result<Subject> {
     match subject_kind {
         "git" => {
-            if input.is_some() {
-                bail!("git-scoped adapter does not accept --input");
+            if input.is_some() || input_artifact.is_some() || input_media_type.is_some() {
+                bail!("git-scoped adapter accepts only --subject");
             }
             let path = subject.ok_or_else(|| anyhow::anyhow!("--subject is required"))?;
             git_subject::snapshot(
@@ -913,14 +943,21 @@ fn resolve_plan_subject(
             if subject.is_some() {
                 bail!("artifact-scoped adapter does not accept --subject");
             }
-            let file = input.ok_or_else(|| anyhow::anyhow!("--input is required"))?;
-            let artifact = workspace.import_artifact(
-                file,
-                vec!["handoff_input".to_owned()],
-                input_media_type.to_owned(),
-                "native_file",
-                "byte_for_byte_copy",
-            )?;
+            let artifact = match (input, input_artifact) {
+                (Some(file), None) => workspace.import_artifact(
+                    file,
+                    vec!["handoff_input".to_owned()],
+                    input_media_type.unwrap_or("application/json").to_owned(),
+                    "native_file",
+                    "byte_for_byte_copy",
+                )?,
+                (None, Some(artifact)) if input_media_type.is_none() => artifact.clone(),
+                (Some(_), Some(_)) => {
+                    bail!("--input and --input-artifact are mutually exclusive")
+                }
+                (None, Some(_)) => bail!("--input-media-type is valid only with --input"),
+                (None, None) => bail!("--input or --input-artifact is required"),
+            };
             Ok(artifact_subject(
                 &artifact,
                 workspace
@@ -931,13 +968,56 @@ fn resolve_plan_subject(
             ))
         }
         "self_foundation" => {
-            if subject.is_some() || input.is_some() {
-                bail!("self-foundation adapter accepts neither --subject nor --input");
+            if subject.is_some()
+                || input.is_some()
+                || input_artifact.is_some()
+                || input_media_type.is_some()
+            {
+                bail!("self-foundation adapter accepts no subject or input option");
             }
             Ok(Subject::SelfFoundation {
                 tool_manifest_id: manifest_id.to_owned(),
             })
         }
+        other => bail!("unsupported manifest subject kind: {other}"),
+    }
+}
+
+fn validate_plan_subject_arguments(
+    subject_kind: &str,
+    subject: Option<&Path>,
+    input: Option<&Path>,
+    input_artifact: Option<&str>,
+    input_media_type: Option<&str>,
+) -> Result<()> {
+    match subject_kind {
+        "git" if input.is_some() || input_artifact.is_some() || input_media_type.is_some() => {
+            bail!("git-scoped adapter accepts only --subject")
+        }
+        "git" if subject.is_none() => bail!("--subject is required"),
+        "git" => Ok(()),
+        "artifact" if subject.is_some() => {
+            bail!("artifact-scoped adapter does not accept --subject")
+        }
+        "artifact" if input.is_some() && input_artifact.is_some() => {
+            bail!("--input and --input-artifact are mutually exclusive")
+        }
+        "artifact" if input.is_none() && input_artifact.is_none() => {
+            bail!("--input or --input-artifact is required")
+        }
+        "artifact" if input.is_none() && input_media_type.is_some() => {
+            bail!("--input-media-type is valid only with --input")
+        }
+        "artifact" => Ok(()),
+        "self_foundation"
+            if subject.is_some()
+                || input.is_some()
+                || input_artifact.is_some()
+                || input_media_type.is_some() =>
+        {
+            bail!("self-foundation adapter accepts no subject or input option")
+        }
+        "self_foundation" => Ok(()),
         other => bail!("unsupported manifest subject kind: {other}"),
     }
 }
@@ -1005,4 +1085,240 @@ fn success<T: Serialize>(command: &'static str, data: T) -> Result<CommandOutcom
 
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_artifact_cli_is_exclusive_and_media_type_requires_file_input() {
+        for arguments in [
+            vec![
+                "ewb",
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--input-artifact",
+                "artifact_11111111111111111111111111111111",
+                "--input",
+                "input.json",
+            ],
+            vec![
+                "ewb",
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--input-artifact",
+                "artifact_11111111111111111111111111111111",
+                "--subject",
+                ".",
+            ],
+            vec![
+                "ewb",
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--input-media-type",
+                "text/plain",
+            ],
+            vec![
+                "ewb",
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--input-artifact",
+                "artifact_11111111111111111111111111111111",
+                "--input-media-type",
+                "text/plain",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(arguments).is_err());
+        }
+
+        let parsed = Cli::try_parse_from([
+            "ewb",
+            "runs",
+            "plan",
+            "--tool",
+            "phaseledger",
+            "--input",
+            "input.json",
+        ])
+        .unwrap();
+        let Command::Runs(RunsCommand {
+            command: RunsSubcommand::Plan {
+                input_media_type, ..
+            },
+        }) = parsed.command
+        else {
+            panic!("unexpected parsed command")
+        };
+        assert_eq!(input_media_type, None);
+    }
+
+    #[test]
+    fn legacy_file_input_defaults_to_application_json() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = workspace::Workspace::init(temporary.path()).unwrap();
+        let input = temporary.path().join("observation.bin");
+        fs::write(&input, b"not reserialized").unwrap();
+        let plan_id = "plan_11111111111111111111111111111111";
+
+        let subject = resolve_plan_subject(
+            &workspace,
+            plan_id,
+            "artifact",
+            "phaseledger",
+            None,
+            Some(&input),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let Subject::Artifact {
+            media_type,
+            source_artifact_id,
+            source_run_id,
+            snapshot,
+            ..
+        } = subject
+        else {
+            panic!("expected artifact subject")
+        };
+        assert_eq!(media_type, "application/json");
+        assert_eq!(source_run_id, None);
+        assert_eq!(snapshot.artifact_id, source_artifact_id);
+        assert_eq!(
+            fs::read(
+                workspace
+                    .object_path(&snapshot.sha256)
+                    .expect("resolve artifact object path")
+            )
+            .unwrap(),
+            b"not reserialized"
+        );
+        assert!(!workspace.execution_path(plan_id).unwrap().exists());
+    }
+
+    #[test]
+    fn existing_artifact_selection_preserves_the_exact_id_without_registry_writes() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = workspace::Workspace::init(temporary.path()).unwrap();
+        let source = temporary.path().join("shared.bin");
+        fs::write(&source, b"same exact bytes").unwrap();
+        let first = workspace
+            .import_artifact(
+                &source,
+                vec!["first_role".to_owned()],
+                "application/first".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        let selected = workspace
+            .import_artifact(
+                &source,
+                vec!["selected_role".to_owned()],
+                "application/selected".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        assert_ne!(first.artifact_id, selected.artifact_id);
+        assert_eq!(first.digest, selected.digest);
+
+        let selected_record_path = workspace
+            .state
+            .join("artifacts")
+            .join(format!("{}.json", selected.artifact_id));
+        let selected_record_before = fs::read(&selected_record_path).unwrap();
+        let artifact_count_before = fs::read_dir(workspace.state.join("artifacts"))
+            .unwrap()
+            .count();
+        let object_count_before = fs::read_dir(
+            workspace
+                .state
+                .join("objects")
+                .join("sha256")
+                .join(&selected.digest.value[..2]),
+        )
+        .unwrap()
+        .count();
+        let verified = workspace.load_artifact(&selected.artifact_id).unwrap();
+        let plan_id = "plan_22222222222222222222222222222222";
+
+        let subject = resolve_plan_subject(
+            &workspace,
+            plan_id,
+            "artifact",
+            "phaseledger",
+            None,
+            None,
+            Some(&verified.artifact),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let Subject::Artifact {
+            sha256,
+            byte_length,
+            media_type,
+            source_run_id,
+            source_artifact_id,
+            snapshot,
+        } = subject
+        else {
+            panic!("expected artifact subject")
+        };
+        assert_eq!(source_artifact_id, selected.artifact_id);
+        assert_eq!(snapshot.artifact_id, selected.artifact_id);
+        assert_eq!(sha256, selected.digest.value);
+        assert_eq!(snapshot.sha256, selected.digest.value);
+        assert_eq!(byte_length, selected.byte_length);
+        assert_eq!(snapshot.byte_length, selected.byte_length);
+        assert_eq!(media_type, selected.media_type);
+        assert_eq!(source_run_id, None);
+        assert_eq!(
+            fs::read_dir(workspace.state.join("artifacts"))
+                .unwrap()
+                .count(),
+            artifact_count_before
+        );
+        assert_eq!(
+            fs::read_dir(
+                workspace
+                    .state
+                    .join("objects")
+                    .join("sha256")
+                    .join(&selected.digest.value[..2]),
+            )
+            .unwrap()
+            .count(),
+            object_count_before
+        );
+        assert_eq!(
+            fs::read(&selected_record_path).unwrap(),
+            selected_record_before
+        );
+        let reloaded = workspace.load_artifact(&selected.artifact_id).unwrap();
+        assert_eq!(reloaded.artifact.roles, ["selected_role"]);
+        assert_eq!(reloaded.artifact.media_type, "application/selected");
+        assert_eq!(
+            fs::read_dir(workspace.state.join("handoffs"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert!(!workspace.execution_path(plan_id).unwrap().exists());
+    }
 }
