@@ -1254,9 +1254,9 @@ fn run_direct(
         }
     };
 
-    if let Some(identity) = &qualified_identity
-        && verify_qualified_application_identity(workspace, identity, None).is_err()
-    {
+    if qualified_identity.as_ref().is_some_and(|identity| {
+        verify_qualified_application_identity(workspace, identity, None).is_err()
+    }) {
         termination = Termination::Interrupted {
             reason: "qualified_application_inventory_changed".to_owned(),
         };
@@ -1267,8 +1267,9 @@ fn run_direct(
             reason: "qualified_windows_search_surface_changed".to_owned(),
         };
     }
-    if let Some(isolated_path) = &isolated_path
-        && isolated_path.verify_empty().is_err()
+    if isolated_path
+        .as_ref()
+        .is_some_and(|path| path.verify_empty().is_err())
     {
         termination = Termination::Interrupted {
             reason: "qualified_empty_path_inventory_changed".to_owned(),
@@ -1440,8 +1441,8 @@ fn fingerprint_python_distribution(executable: &Path, distribution: &str) -> Res
         let direct_url = root.join("direct_url.json");
         if direct_url.is_file() {
             let bytes = fs::read(&direct_url)?;
-            if let Ok(value) = strict_json::parse_strict(&bytes)
-                && value.pointer("/dir_info/editable") == Some(&Value::Bool(true))
+            if strict_json::parse_strict(&bytes)
+                .is_ok_and(|value| value.pointer("/dir_info/editable") == Some(&Value::Bool(true)))
             {
                 bail!(
                     "editable Python distribution detected; install an immutable wheel/snapshot before planning"
