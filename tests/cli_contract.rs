@@ -350,6 +350,91 @@ fn doctor_is_read_only() {
 }
 
 #[test]
+fn doctor_discovers_the_workspace_upward_without_an_explicit_root() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let nested = temp.path().join("nested/deeper");
+    fs::create_dir_all(&nested).unwrap();
+    let before = tree_snapshot(&temp.path().join(".ewb"));
+
+    let (code, value, stderr) = run_json(ewb().current_dir(&nested).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], true);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], true);
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        temp.path().canonicalize().unwrap()
+    );
+    assert_eq!(before, tree_snapshot(&temp.path().join(".ewb")));
+}
+
+#[test]
+fn doctor_keeps_an_explicit_workspace_root_exact() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let nested = temp.path().join("nested");
+    fs::create_dir(&nested).unwrap();
+
+    let (code, value, stderr) = run_json(
+        ewb()
+            .current_dir(&nested)
+            .args(["--json", "--workspace"])
+            .arg(&nested)
+            .arg("doctor"),
+    );
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], false);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        nested.canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn doctor_without_a_workspace_reports_the_current_directory_without_writing() {
+    let temp = TempDir::new().unwrap();
+    let before = tree_snapshot(temp.path());
+
+    let (code, value, stderr) = run_json(ewb().current_dir(temp.path()).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], false);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_eq!(value["data"]["workspace_check"]["error"], "not_initialized");
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        temp.path().canonicalize().unwrap()
+    );
+    assert_eq!(before, tree_snapshot(temp.path()));
+}
+
+#[test]
+fn doctor_stops_at_the_nearest_corrupt_workspace() {
+    let outer = TempDir::new().unwrap();
+    init(outer.path());
+    let inner = outer.path().join("inner");
+    fs::create_dir(&inner).unwrap();
+    init(&inner);
+    fs::write(inner.join(".ewb/WORKSPACE.json"), b"not JSON\n").unwrap();
+    let nested = inner.join("nested");
+    fs::create_dir(&nested).unwrap();
+
+    let (code, value, stderr) = run_json(ewb().current_dir(&nested).args(["--json", "doctor"]));
+
+    assert_eq!(code, 0, "{value:?} {stderr}");
+    assert_eq!(value["data"]["initialized"], true);
+    assert_eq!(value["data"]["workspace_check"]["healthy"], false);
+    assert_ne!(value["data"]["workspace_check"]["error"], Value::Null);
+    assert_eq!(
+        PathBuf::from(value["data"]["workspace_root"].as_str().unwrap()),
+        inner.canonicalize().unwrap()
+    );
+}
+
+#[test]
 fn upstream_registry_projects_twelve_production_pins_without_authority_or_shared_pass() {
     let production = manifests::production_all().unwrap();
     assert_eq!(production.len(), 12);

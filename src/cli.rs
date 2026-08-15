@@ -298,7 +298,8 @@ fn init(cli: &Cli) -> Result<CommandOutcome> {
 }
 
 fn doctor(cli: &Cli) -> Result<CommandOutcome> {
-    let root = requested_root(cli)?;
+    let requested_root = requested_root(cli)?;
+    let root = workspace::Workspace::find_root(cli.workspace.as_deref())?.unwrap_or(requested_root);
     let initialized = workspace::Workspace::is_initialized(&root);
     let workspace_check = if initialized {
         match workspace::Workspace::open(Some(&root)) {

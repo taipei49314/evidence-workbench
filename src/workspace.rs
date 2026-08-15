@@ -91,6 +91,19 @@ impl Workspace {
     }
 
     pub fn open(root: Option<&Path>) -> Result<Self> {
+        let root = Self::find_root(root)?.ok_or_else(|| {
+            anyhow::anyhow!("no initialized .ewb workspace found; run `ewb init`")
+        })?;
+        let workspace = Self {
+            state: root.join(STATE_DIR),
+            root,
+        };
+        workspace.validate_layout()?;
+        workspace.validate_marker()?;
+        Ok(workspace)
+    }
+
+    pub fn find_root(root: Option<&Path>) -> Result<Option<PathBuf>> {
         let start = match root {
             Some(path) => path
                 .canonicalize()
@@ -104,20 +117,14 @@ impl Workspace {
         while let Some(path) = cursor {
             let state = path.join(STATE_DIR);
             if state.is_dir() {
-                let workspace = Self {
-                    root: path.to_owned(),
-                    state,
-                };
-                workspace.validate_layout()?;
-                workspace.validate_marker()?;
-                return Ok(workspace);
+                return Ok(Some(path.to_owned()));
             }
             if root.is_some() {
                 break;
             }
             cursor = path.parent();
         }
-        bail!("no initialized .ewb workspace found; run `ewb init`");
+        Ok(None)
     }
 
     pub fn is_initialized(root: &Path) -> bool {
