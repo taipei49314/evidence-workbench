@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench reference-only evidence handoff v1",
+  "description": "Carries untrusted references that claim one EWB plan record, producer run record, and captured run artifact record are related. Parsing does not prove that lineage. The contract supplies no command, verdict, status, score, or authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "handoff_id",
+    "created_at",
+    "producer_plan_ref",
+    "producer_run_ref",
+    "artifact_ref",
+    "relationship",
+    "consumer_treatment",
+    "authority_effect"
+  ],
+  "properties": {
+    "schema_version": { "const": "evidence-handoff/v1" },
+    "handoff_id": {
+      "description": "Opaque typed identifier; not a content digest or authenticity proof.",
+      "type": "string",
+      "pattern": "^handoff_[0-9a-f]{32}$"
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "producer_plan_ref": { "$ref": "#/$defs/plan_ref" },
+    "producer_run_ref": { "$ref": "#/$defs/run_ref" },
+    "artifact_ref": { "$ref": "#/$defs/artifact_ref" },
+    "relationship": { "const": "captured_run_artifact" },
+    "consumer_treatment": { "const": "untrusted_exact_bytes" },
+    "authority_effect": { "const": "none" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "plan_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_id", "record_digest"],
+      "properties": {
+        "plan_id": { "type": "string", "pattern": "^plan_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "run_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "record_digest"],
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^run_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "record_digest"],
+      "properties": {
+        "artifact_id": { "type": "string", "pattern": "^artifact_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

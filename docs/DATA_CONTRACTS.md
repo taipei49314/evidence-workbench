@@ -31,6 +31,21 @@ authority.
   remains a backward-compatible, reference-only optional projection; it is not
   the canonical integration carrier. The canonical boundary is the EWB JSON
   envelope, exact CAS artifacts, and immutable plan/run identities and digests.
+- `evidence-handoff/v1` is a reference-only descriptor for exactly one producer
+  plan record, producer run record, and captured artifact record. Its
+  relationship is fixed to `captured_run_artifact`; a consumer must treat the
+  referenced artifact as `untrusted_exact_bytes`, and `authority_effect` is
+  fixed to `none`. It cannot carry a command, argument vector, parameters,
+  capabilities, status, verdict, pass state, score, or authority claim. Parsing
+  validates the closed shape, IDs, digests, and timestamp only. A future
+  registry must independently load all three records, verify the run-to-plan
+  link, confirm the exact artifact descriptor is in the run, and verify its CAS
+  bytes before relying on the reference. No handoff registry or CLI command is
+  defined by this contract-only version. Each `record_digest` is EWB's SHA-256
+  over compact typed JSON: `PlanPayload`, `InstrumentRun`, or
+  `ArtifactDescriptor`, respectively. It is not the raw SHA-256 of the enclosing
+  registry-record file. `handoff_id` is only an opaque typed ID in v1; it is not
+  a content digest, authenticity proof, or source of trust.
 
 Every object shape is closed with `additionalProperties: false`. Rust parsing
 also rejects duplicate JSON keys and applies semantic cross-field validation.
