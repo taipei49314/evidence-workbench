@@ -1,5 +1,17 @@
 $ErrorActionPreference = 'Stop'
 
+function Set-ProcessEnvironmentValue($name, $value) {
+    if ($null -eq $value) {
+        # On this Windows PowerShell/.NET path, SetEnvironmentVariable(...,
+        # $null, 'Process') leaves an empty variable instead of removing it.
+        # build.rs deliberately distinguishes an absent optional tag from an
+        # invalid empty tag, so remove absent values through the Env provider.
+        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    } else {
+        [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+    }
+}
+
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $commit = (& git -C $projectRoot rev-parse HEAD | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the builder-recorded Git HEAD' }
@@ -36,20 +48,16 @@ if (-not [string]::IsNullOrWhiteSpace($env:CARGO_INSTALL_ROOT)) {
 $installRoot = [IO.Path]::GetFullPath($installRoot)
 
 try {
-    [Environment]::SetEnvironmentVariable('EWB_BUILD_VCS_COMMIT', $commit, 'Process')
-    [Environment]::SetEnvironmentVariable('EWB_BUILD_VCS_TREE', $tree, 'Process')
-    [Environment]::SetEnvironmentVariable(
-        'EWB_BUILD_VCS_DIRTY',
-        $dirty.ToString().ToLowerInvariant(),
-        'Process'
-    )
-    [Environment]::SetEnvironmentVariable('EWB_BUILD_VCS_TAG', $exactTag, 'Process')
+    Set-ProcessEnvironmentValue 'EWB_BUILD_VCS_COMMIT' $commit
+    Set-ProcessEnvironmentValue 'EWB_BUILD_VCS_TREE' $tree
+    Set-ProcessEnvironmentValue 'EWB_BUILD_VCS_DIRTY' ($dirty.ToString().ToLowerInvariant())
+    Set-ProcessEnvironmentValue 'EWB_BUILD_VCS_TAG' $exactTag
 
     cargo install --path $projectRoot --locked --force --root $installRoot
     if ($LASTEXITCODE -ne 0) { throw "cargo install failed with exit code $LASTEXITCODE" }
 } finally {
     foreach ($name in $metadataNames) {
-        [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
+        Set-ProcessEnvironmentValue $name $previousEnvironment[$name]
     }
 }
 
