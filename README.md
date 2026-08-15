@@ -35,7 +35,7 @@ The Git execution tree intentionally contains tracked working-tree files without
 
 ## Install
 
-Rust 1.85+ is required (the project currently builds with Rust 1.97.1):
+Rust 1.85+ is supported. CI tests both the declared Rust 1.85 minimum and the current stable toolchain on Windows and Ubuntu:
 
 ```powershell
 cargo install --path . --locked

@@ -881,11 +881,9 @@ fn ensure_real_dir(path: &Path) -> Result<()> {
     if path.exists() {
         validate_real_dir(path)
     } else {
-        if let Err(error) = retry_transient(|| fs::create_dir(path))
-            && !path.is_dir()
-        {
-            return Err(error)
-                .with_context(|| format!("cannot create directory {}", path.display()));
+        let create_result = retry_transient(|| fs::create_dir(path));
+        if !path.is_dir() {
+            create_result.with_context(|| format!("cannot create directory {}", path.display()))?;
         }
         validate_real_dir(path)
     }
