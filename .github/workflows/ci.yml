@@ -48,6 +48,27 @@ jobs:
             cargo test --locked --manifest-path tests/harness/Cargo.toml
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Verify local installer on an untagged checkout
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $metadataNames = @(
+            'EWB_BUILD_VCS_COMMIT',
+            'EWB_BUILD_VCS_TREE',
+            'EWB_BUILD_VCS_DIRTY',
+            'EWB_BUILD_VCS_TAG'
+          )
+          foreach ($name in $metadataNames) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+          }
+          $env:CARGO_INSTALL_ROOT = Join-Path $env:RUNNER_TEMP 'ewb-install-contract'
+          & ./scripts/install-local.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($name in $metadataNames) {
+            if (Test-Path -LiteralPath "Env:$name") {
+              throw "$name leaked from install-local.ps1"
+            }
+          }
 
   msrv:
     name: ${{ matrix.os }} / rust 1.85
