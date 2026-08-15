@@ -1,7 +1,9 @@
 use assert_cmd::Command;
 use evidence_workbench::contracts::RuntimeCapsule;
 #[cfg(windows)]
-use evidence_workbench::contracts::{EvidenceHandoffRecord, PlanRecord};
+use evidence_workbench::contracts::{
+    EvidenceHandoffRecord, PlanRecord, PythonRuntimeQualificationRecord,
+};
 use evidence_workbench::data_contract_validation::parse_cli_envelope;
 use evidence_workbench::manifests;
 use evidence_workbench::workspace::digest_serialized;
@@ -352,6 +354,11 @@ fn read_only_registry_lists_are_empty_and_fail_atomically_on_unexpected_entries(
         ("plans", "plans", "plans.list"),
         ("artifacts", "artifacts", "artifacts.list"),
         ("qualifications", "qualifications", "qualifications.list"),
+        (
+            "python-qualifications",
+            "python-qualifications",
+            "python-qualifications.list",
+        ),
         ("handoffs", "handoffs", "handoffs.list"),
     ] {
         let (code, value, stderr) = run_json(
@@ -556,6 +563,62 @@ fn handoff_registry_rejects_a_linked_storage_directory() {
             .args(["--json", "--workspace"])
             .arg(temp.path())
             .args(["handoffs", "list"]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert_eq!(failure["ok"], false);
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("real directory")
+    );
+    assert_eq!(fs::read_dir(link_target).unwrap().count(), 0);
+}
+
+#[test]
+fn python_qualification_registry_is_required_and_idempotent_init_upgrades_it() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let registry = temp.path().join(".ewb/python-qualifications");
+    fs::remove_dir(&registry).unwrap();
+
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-qualifications", "list"]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert_eq!(failure["ok"], false);
+    assert!(!registry.exists());
+
+    init(temp.path());
+    assert!(registry.is_dir());
+    let (code, listed, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-qualifications", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["data"], json!([]));
+}
+
+#[test]
+fn python_qualification_registry_rejects_a_linked_storage_directory() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let registry = temp.path().join(".ewb/python-qualifications");
+    let link_target = temp.path().join("linked Python qualification target");
+    fs::remove_dir(&registry).unwrap();
+    fs::create_dir(&link_target).unwrap();
+    create_directory_link(&link_target, &registry);
+
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-qualifications", "list"]),
     );
     assert_eq!(code, 2, "{failure:?} {stderr}");
     assert_eq!(failure["ok"], false);
@@ -1093,6 +1156,22 @@ fn capsule_cli_admits_lists_shows_and_verifies_while_phaseledger_stays_blocked()
         );
         assert_eq!(code, 0, "{value:?} {stderr}");
         assert_eq!(value["data"]["capsule_id"], capsule_id);
+        if command == "verify" {
+            assert_eq!(value["data"]["readiness"], "fail_closed");
+            assert_eq!(
+                value["data"]["blocker_codes"],
+                json!(["python_runtime_qualification_not_connected"])
+            );
+            assert_eq!(value["data"]["descriptor_claimed_readiness"], "fail_closed");
+            assert_eq!(
+                value["data"]["descriptor_blocker_codes"],
+                json!(["qualification_missing"])
+            );
+            assert_eq!(
+                value["data"]["execution_admission"],
+                "not_granted_by_runtime_capsule"
+            );
+        }
     }
 
     let plans_before = fs::read_dir(temp.path().join(".ewb/plans"))
@@ -1116,13 +1195,292 @@ fn capsule_cli_admits_lists_shows_and_verifies_while_phaseledger_stays_blocked()
         blocked["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("runtime_capsule_not_ready")
+            .contains("python_runtime_qualification_not_connected")
     );
     assert_eq!(
         fs::read_dir(temp.path().join(".ewb/plans"))
             .unwrap()
             .count(),
         plans_before
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn python_qualification_cli_binds_exact_inventory_but_never_plans_or_executes() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+
+    let add_artifact = |name: &str, bytes: &[u8], role: &str| -> Value {
+        let path = temp.path().join(name);
+        fs::write(&path, bytes).unwrap();
+        let (code, value, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["artifacts", "add", "--file"])
+                .arg(&path)
+                .args(["--role", role]),
+        );
+        assert_eq!(code, 0, "{value:?} {stderr}");
+        value["data"].clone()
+    };
+    let archive = add_artifact(
+        "python-embed.zip",
+        b"exact CPython archive",
+        "runtime_input",
+    );
+    let wheel = add_artifact("phaseledger.whl", b"exact wheel bytes", "runtime_input");
+    let evidence = add_artifact(
+        "descriptor-claim.json",
+        br#"{"descriptor_claim":"ready"}"#,
+        "qualification_evidence",
+    );
+
+    let capsule_root = temp.path().join("python-capsule-root");
+    fs::create_dir_all(capsule_root.join("site/phaseledger-0.6.0.dist-info")).unwrap();
+    let launcher = b"not an executable; create must never spawn this";
+    let path_configuration = b"python313.zip\nsite\n";
+    let installed_record = b"phaseledger/__init__.py,,\n";
+    fs::write(capsule_root.join("python.exe"), launcher).unwrap();
+    fs::write(capsule_root.join("python313._pth"), path_configuration).unwrap();
+    fs::write(
+        capsule_root.join("site/phaseledger-0.6.0.dist-info/RECORD"),
+        installed_record,
+    )
+    .unwrap();
+
+    let capsule_id = "capsule_34343434343434343434343434343434";
+    let mut descriptor = json!({
+        "schema_version": "runtime-capsule/v1",
+        "capsule_id": capsule_id,
+        "platform": {"os":"windows","arch":"x86_64","abi":"cp313-win_amd64"},
+        "launcher": {
+            "kind": "interpreter",
+            "path": "python.exe",
+            "byte_length": launcher.len(),
+            "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(launcher))}
+        },
+        "supporting_files": [
+            {
+                "path": "python313._pth",
+                "role": "path_configuration",
+                "byte_length": path_configuration.len(),
+                "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(path_configuration))}
+            },
+            {
+                "path": "site/phaseledger-0.6.0.dist-info/RECORD",
+                "role": "installed_record",
+                "byte_length": installed_record.len(),
+                "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(installed_record))}
+            }
+        ],
+        "transitive_closure": {
+            "state": "complete",
+            "inventory_digest": {"algorithm":"sha256","value":"00".repeat(32)},
+            "declared_file_count": 2,
+            "inventoried_file_count": 2,
+            "missing_paths": []
+        },
+        "external_platform_assumptions": [],
+        "operation_scope": {
+            "tool_manifest_id": "phaseledger",
+            "operations": ["phaseledger_measure"]
+        },
+        "qualification_evidence": [{
+            "kind": "qualification_run",
+            "artifact_id": evidence["artifact_id"],
+            "digest": evidence["digest"],
+            "observed_at": "2026-08-16T00:00:00Z",
+            "scope": "descriptor-only readiness claim"
+        }],
+        "readiness": {"state":"ready","blocker_codes":[]},
+        "authority_effect": "none"
+    });
+    let parsed: RuntimeCapsule = serde_json::from_value(descriptor.clone()).unwrap();
+    descriptor["transitive_closure"]["inventory_digest"]["value"] = Value::String(
+        digest_serialized(&parsed.supporting_files).expect("digest supporting inventory"),
+    );
+    let descriptor_path = temp.path().join("python-runtime-capsule.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec_pretty(&descriptor).unwrap(),
+    )
+    .unwrap();
+    let (code, admitted, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["capsules", "admit", "--descriptor"])
+            .arg(&descriptor_path)
+            .arg("--root")
+            .arg(&capsule_root),
+    );
+    assert_eq!(code, 0, "{admitted:?} {stderr}");
+
+    let no_execution_writes_before = ["plans", "runs", "executions"].map(|directory| {
+        (
+            directory,
+            fs::read_dir(temp.path().join(".ewb").join(directory))
+                .unwrap()
+                .count(),
+        )
+    });
+    let (code, created, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-qualifications",
+                "create",
+                "--capsule",
+                capsule_id,
+                "--cpython-archive-artifact",
+                archive["artifact_id"].as_str().unwrap(),
+                "--path-configuration",
+                "python313._pth",
+                "--wheel-artifact",
+                wheel["artifact_id"].as_str().unwrap(),
+                "--installed-record-path",
+                "site/phaseledger-0.6.0.dist-info/RECORD",
+            ]),
+    );
+    assert_eq!(code, 0, "{created:?} {stderr}");
+    assert_eq!(created["command"], "python-qualifications.create");
+    assert_eq!(
+        created["data"]["payload"]["qualification_state"]["state"],
+        "incomplete"
+    );
+    assert!(
+        created["data"]["payload"]["qualification_state"]
+            .get("requirements_met")
+            .is_none()
+    );
+    assert_eq!(
+        created["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|check| check["state"].as_str().unwrap())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["not_implemented"])
+    );
+    assert_eq!(created["data"]["payload"]["authority_effect"], "none");
+    let qualification_id = created["data"]["qualification_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    for (subcommand, expected_command) in [
+        ("show", "python-qualifications.show"),
+        ("verify", "python-qualifications.verify"),
+    ] {
+        let (code, value, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["python-qualifications", subcommand, &qualification_id]),
+        );
+        assert_eq!(code, 0, "{value:?} {stderr}");
+        assert_eq!(value["command"], expected_command);
+        if subcommand == "verify" {
+            assert_eq!(value["data"]["qualification_state"], "incomplete");
+            assert_eq!(
+                value["data"]["execution_admission"],
+                "not_granted_by_incomplete_python_runtime_qualification"
+            );
+            assert_eq!(value["data"]["authority_effect"], "none");
+        }
+    }
+    let (code, listed, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-qualifications", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["data"].as_array().unwrap().len(), 1);
+
+    for (directory, before) in no_execution_writes_before {
+        assert_eq!(
+            fs::read_dir(temp.path().join(".ewb").join(directory))
+                .unwrap()
+                .count(),
+            before,
+            "Python qualification command wrote to {directory}"
+        );
+    }
+    let (code, capsule_verification, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["capsules", "verify", capsule_id]),
+    );
+    assert_eq!(code, 0, "{capsule_verification:?} {stderr}");
+    assert_eq!(capsule_verification["data"]["readiness"], "fail_closed");
+    assert_eq!(
+        capsule_verification["data"]["descriptor_claimed_readiness"],
+        "ready"
+    );
+    assert_eq!(
+        capsule_verification["data"]["execution_admission"],
+        "not_granted_by_runtime_capsule"
+    );
+
+    let plans_before = fs::read_dir(temp.path().join(".ewb/plans"))
+        .unwrap()
+        .count();
+    let (code, blocked, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--runtime-capsule",
+                capsule_id,
+            ]),
+    );
+    assert_eq!(code, 2, "{blocked:?} {stderr}");
+    assert!(
+        blocked["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("python_runtime_qualification_not_connected")
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/plans"))
+            .unwrap()
+            .count(),
+        plans_before
+    );
+
+    let record_path = temp
+        .path()
+        .join(".ewb/python-qualifications")
+        .join(format!("{qualification_id}.json"));
+    let mut record: PythonRuntimeQualificationRecord =
+        serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record.payload.runtime_inputs.wheel_records[0]
+        .wheel
+        .artifact_ref
+        .record_digest = "f".repeat(64);
+    record.record_digest = digest_serialized(&record.payload).unwrap();
+    fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    let (code, failure, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-qualifications", "show", &qualification_id]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("exact artifact binding changed")
     );
 }
 

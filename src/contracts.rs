@@ -636,6 +636,165 @@ pub enum CapsuleReadinessState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct PythonRuntimeQualification {
+    pub schema_version: String,
+    pub observed_at: String,
+    pub capsule_ref: PythonCapsuleRef,
+    pub tool_ref: ToolRef,
+    pub upstream_pin_ref: UpstreamPinRef,
+    pub operation: String,
+    pub recorder_identity: RecorderIdentity,
+    pub platform_observation: PythonPlatformObservation,
+    pub runtime_inputs: PythonRuntimeInputs,
+    pub launch_contract: PythonLaunchContract,
+    pub checks: Vec<PythonQualificationCheck>,
+    pub qualification_state: PythonQualificationState,
+    pub authority_effect: ContractAuthorityEffect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonRuntimeQualificationRecord {
+    pub schema_version: String,
+    pub qualification_id: String,
+    /// SHA-256 over compact typed JSON for `payload`, not the registry file.
+    pub record_digest: String,
+    pub payload: PythonRuntimeQualification,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonCapsuleRef {
+    pub id: String,
+    pub record_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExactArtifactBinding {
+    pub artifact_ref: ArtifactRecordRef,
+    pub digest: Digest,
+    pub byte_length: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExactCapsuleFileBinding {
+    pub path: String,
+    pub artifact: ExactArtifactBinding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonPlatformObservation {
+    pub target: PythonTargetPlatform,
+    pub host: PythonHostPlatform,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonTargetPlatform {
+    pub os: String,
+    pub arch: String,
+    pub abi: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonHostPlatform {
+    pub os: String,
+    pub arch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonRuntimeInputs {
+    pub cpython_archive: ExactArtifactBinding,
+    pub path_configuration: ExactCapsuleFileBinding,
+    pub wheel_records: Vec<PythonWheelRecordBinding>,
+    pub wrapper: PythonWrapperBinding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonWheelRecordBinding {
+    pub wheel: ExactArtifactBinding,
+    pub installed_record: ExactCapsuleFileBinding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonWrapperBinding {
+    pub contract_id: String,
+    pub artifact: ExactArtifactBinding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonLaunchContract {
+    pub mode: String,
+    pub launcher_source: String,
+    pub fixed_arguments: Vec<String>,
+    pub wrapper_source: String,
+    pub argument_tail: String,
+    pub cwd: String,
+    pub environment: PythonEnvironmentContract,
+    pub layout: PythonPrivateLayout,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonEnvironmentContract {
+    pub inheritance: String,
+    pub variables: Vec<PythonEnvironmentVariable>,
+    pub other_variables: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonEnvironmentVariable {
+    pub name: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonPrivateLayout {
+    pub runtime: String,
+    pub subject: String,
+    pub scratch: String,
+    pub wrapper: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonQualificationCheck {
+    pub code: String,
+    pub state: PythonQualificationCheckState,
+    pub evidence_refs: Vec<ExactArtifactBinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PythonQualificationCheckState {
+    NotImplemented,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonQualificationState {
+    pub state: PythonQualificationStateValue,
+    pub blocker_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PythonQualificationStateValue {
+    Incomplete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AuditTopology {
     pub schema_version: String,
     pub topology_id: String,

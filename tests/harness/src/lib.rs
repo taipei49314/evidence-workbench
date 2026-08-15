@@ -19,6 +19,8 @@ pub mod manifests;
 pub mod native;
 #[path = "../../../src/native_qualifications.rs"]
 pub mod native_qualifications;
+#[path = "../../../src/python_qualifications.rs"]
+pub mod python_qualifications;
 #[path = "../../../src/run_validation.rs"]
 pub mod run_validation;
 #[path = "../../../src/runtime_capsules.rs"]

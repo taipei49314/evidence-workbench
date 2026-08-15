@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench local Python runtime qualification record v1",
+  "description": "Wraps one incomplete python_runtime_qualification/v1 payload. record_digest is SHA-256 over compact typed payload JSON; the opaque id does not represent trust or execution readiness.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "qualification_id", "record_digest", "payload"],
+  "properties": {
+    "schema_version": { "const": "python_runtime_qualification_record/v1" },
+    "qualification_id": { "type": "string", "pattern": "^qualification_[0-9a-f]{32}$" },
+    "record_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "payload": { "$ref": "python-runtime-qualification-v1.schema.json" }
+  }
+}

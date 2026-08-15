@@ -95,10 +95,11 @@ ewb --json tools list
 
 `doctor` is read-only and does not launch native version commands. `tools probe` is also rejected for every `fail_closed` adapter; it may launch a version probe only after a future production adapter has an admitted complete runtime closure. Trusted manifests are compiled into the `ewb` binary; files placed under `.ewb/manifests` cannot grant a new executable, capability, result, or authority claim.
 
-`.ewb/handoffs` is a required workspace directory. After upgrading an existing
-workspace, run the same idempotent `ewb --json --workspace <PATH> init` command
-once to add it. Until then, normal workspace opens and registry commands fail
-closed, while `doctor` reports the layout as unhealthy. A missing handoff
+`.ewb/handoffs` and `.ewb/python-qualifications` are required workspace
+directories. After upgrading an existing workspace, run the same idempotent
+`ewb --json --workspace <PATH> init` command once to add either missing
+directory. Until then, normal workspace opens and registry commands fail
+closed, while `doctor` reports the layout as unhealthy. A missing registry
 directory is never treated as an empty registry.
 
 The durable registries have symmetric read-only inspection surfaces:
@@ -109,6 +110,7 @@ ewb --json --workspace C:\evidence-workspace plans show <PLAN_ID>
 ewb --json --workspace C:\evidence-workspace artifacts list
 ewb --json --workspace C:\evidence-workspace artifacts show <ARTIFACT_ID>
 ewb --json --workspace C:\evidence-workspace qualifications list
+ewb --json --workspace C:\evidence-workspace python-qualifications list
 ewb --json --workspace C:\evidence-workspace handoffs list
 ewb --json --workspace C:\evidence-workspace handoffs show <HANDOFF_ID>
 ```
@@ -158,8 +160,62 @@ The resulting tree is for local admission experiments only.
 `admit` never downloads or installs anything. It rejects extra, missing,
 linked, reparse, or hash-mismatched files; all qualification evidence must
 already exist as exact workspace artifacts. `list`, `show`, and `verify`
-revalidate registry records and EWB-owned object bytes. Capsule readiness and
-qualification do not create a native result, trust claim, or authority.
+revalidate registry records and EWB-owned object bytes. A capsule descriptor's
+`readiness` and blocker list are only descriptor claims. `capsules verify`
+reports those under `descriptor_claimed_readiness` and
+`descriptor_blocker_codes`; its compatibility `readiness` is EWB's fixed
+`fail_closed` admission with `python_runtime_qualification_not_connected`.
+`execution_admission` remains `not_granted_by_runtime_capsule`. Capsule
+admission does not create a native result, trust claim, or authority.
+
+### Incomplete Python runtime qualification registry
+
+`python-qualifications create` binds one re-verified exact-byte,
+single-operation Python capsule record to an exact embedded manifest and exact
+fail-closed upstream pin, one
+existing CPython archive artifact, a capsule-owned `python*._pth` snapshot,
+and one or more existing wheel artifacts paired with capsule-owned
+`.dist-info/RECORD` snapshots:
+
+```powershell
+$qualification = ewb --json --workspace C:\evidence-workspace python-qualifications create `
+  --capsule $capsule.data.capsule_id `
+  --cpython-archive-artifact $cpythonArchive.data.artifact_id `
+  --path-configuration python313._pth `
+  --wheel-artifact $phaseledgerWheel.data.artifact_id `
+  --installed-record-path site/phaseledger-0.6.0.dist-info/RECORD | ConvertFrom-Json
+
+ewb --json --workspace C:\evidence-workspace python-qualifications verify `
+  $qualification.data.qualification_id
+```
+
+Repeat `--wheel-artifact` and `--installed-record-path` in corresponding
+pairs. EWB canonicalizes the retained pairs by wheel-byte digest and RECORD
+path; artifact IDs and RECORD paths must be unique, including Windows ASCII
+case folding for paths. Distinct artifact records containing identical wheel
+bytes are not collapsed: each exact artifact record remains a separate caller
+selection and is paired with its own distinct RECORD path.
+
+This v1 can represent only eight sorted `not_implemented` checks and an
+`incomplete` state carrying all eight blocker codes. There is no `verified`,
+`ready`, `requirements_met`, success, verdict, or authority-bearing state in
+the schema or Rust type. The fixed launch description (`-I -S -B -X utf8`, no
+environment inheritance, private runtime/subject/scratch layout, empty PATH)
+is a future qualification target, not an implemented launcher. The fixed
+embedded wrapper is captured as an exact artifact under
+`evidence-workbench-python-runtime-wrapper/v1`; changing its LF-pinned bytes
+requires a new wrapper contract ID.
+
+Create validates all caller-selected references before capturing that wrapper,
+then atomically creates a unique record and reloads it. `list`, `show`, and
+`verify` revalidate the capsule record and CAS, manifest and upstream-pin
+digests, recorder identity, wrapper bytes, every artifact record, and every CAS
+object; list is all-or-nothing. These commands never spawn Python, inspect a
+target, or write `.ewb/plans`, `.ewb/runs`, or `.ewb/executions`. Exit 0 from
+create means only that an incomplete record was safely stored. Python planning
+still fails with `python_runtime_qualification_not_connected`, regardless of a
+capsule descriptor's claimed readiness. The opaque `qualification_<32hex>` ID
+is a registry locator, not a trust statement or content digest.
 
 ### Untrusted GitHub discovery handoff
 
@@ -265,7 +321,7 @@ ewb --json --workspace C:\evidence-workspace runs execute `
   --allow read_artifact
 ```
 
-The caller remains responsible for constructing an honest phaseledger observation whose claim scope names the exact subject and predicate source. `--input-artifact` selects one existing verified workspace artifact by its exact ID; it does not inspect handoffs or runs and does not infer a producer. `--input FILE` remains available for a new byte-for-byte import and defaults to `application/json`; `--input-media-type` is valid only with that file-import form. Even a `ready` exact-byte capsule currently stops before plan creation with `python_capsule_execution_containment_unimplemented`: the minimized process environment is not an OS-enforced network or child-process sandbox.
+The caller remains responsible for constructing an honest phaseledger observation whose claim scope names the exact subject and predicate source. `--input-artifact` selects one existing verified workspace artifact by its exact ID; it does not inspect handoffs or runs and does not infer a producer. `--input FILE` remains available for a new byte-for-byte import and defaults to `application/json`; `--input-media-type` is valid only with that file-import form. Even a descriptor-claimed `ready` exact-byte capsule currently stops before plan creation with `python_runtime_qualification_not_connected`: capsules remain inventory-only, and the new incomplete qualification registry is deliberately not a plan/run or execution-containment path.
 
 ### StateWeaver candidate admission and future invocation (execution currently fails closed)
 
@@ -389,6 +445,8 @@ credentials.
 - [`contracts/candidate-pin-v1.schema.json`](contracts/candidate-pin-v1.schema.json)
 - [`contracts/upstream-pin-v1.schema.json`](contracts/upstream-pin-v1.schema.json)
 - [`contracts/native-delivery-qualification-v1.schema.json`](contracts/native-delivery-qualification-v1.schema.json)
+- [`contracts/python-runtime-qualification-v1.schema.json`](contracts/python-runtime-qualification-v1.schema.json)
+- [`contracts/python-runtime-qualification-record-v1.schema.json`](contracts/python-runtime-qualification-record-v1.schema.json)
 - [`contracts/build-identity-v1.schema.json`](contracts/build-identity-v1.schema.json)
 - [`contracts/ewb-cli-envelope-v1.schema.json`](contracts/ewb-cli-envelope-v1.schema.json)
 - [`contracts/evidence-handoff-v1.schema.json`](contracts/evidence-handoff-v1.schema.json)

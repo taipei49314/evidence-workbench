@@ -25,6 +25,21 @@ authority.
   `transitive_closure.inventory_digest` is SHA-256 of that array serialized as
   compact JSON from the typed field order. The launcher is bound separately and
   is not counted in that digest.
+- `python_runtime_qualification/v1` is an EWB-created, Windows x86-64,
+  single-operation inventory binding. It binds the exact runtime-capsule record,
+  embedded manifest and fail-closed upstream pin, EWB recorder, CPython archive
+  artifact, `python*._pth` capsule snapshot, canonical wheel/installed-RECORD
+  pairs, fixed wrapper artifact, declarative isolated argv/environment/layout,
+  and exactly eight checks. Every check is schema-closed to
+  `not_implemented`; the only qualification state is `incomplete` with all
+  eight check codes as sorted blockers. It has no successful state and
+  `authority_effect` is `none`.
+- `python_runtime_qualification_record/v1` wraps that payload under an opaque
+  `qualification_<32hex>` locator. Its `record_digest` is SHA-256 over compact
+  typed payload JSON, not the enclosing registry file. Artifact bindings pair
+  the existing raw-digest `ArtifactRecordRef` with a `Digest` for original
+  artifact bytes and an exact byte length. The ID and hashes prove neither
+  producer authenticity nor execution readiness.
 - `ide-handoff/v1` gives an IDE immutable plan, run, and artifact references plus
   native namespace and authority-availability metadata. It carries no command,
   arbitrary argument vector, aggregate verdict, or synthesized pass state. It
@@ -93,6 +108,23 @@ contract selects an artifact by role or infers a handoff from a run.
 
 Every object shape is closed with `additionalProperties: false`. Rust parsing
 also rejects duplicate JSON keys and applies semantic cross-field validation.
+
+The Python qualification registry is `.ewb/python-qualifications`. Upgrading
+an existing workspace requires rerunning idempotent `ewb init` once; reads fail
+closed if the directory is absent, linked, contains an unexpected entry, or if
+any listed record/reference/CAS object fails re-verification. `create`, `list`,
+`show`, and `verify` never spawn a process and never write a plan, run, or
+execution directory. `create` writes only the exact embedded wrapper artifact
+and its own atomic unique registry record after caller-input preflight. No plan
+or run schema, `NativeQualificationRef`, native adapter, manifest enablement, or
+upstream-pin readiness is changed by this contract.
+
+Runtime-capsule descriptor readiness is not EWB execution admission. Capsule
+verification reports the descriptor values only as `descriptor_claimed_*` and
+reports fixed EWB admission as `fail_closed` /
+`python_runtime_qualification_not_connected`. Python planning ignores the
+descriptor claim and remains blocked because this incomplete qualification
+registry is intentionally not connected to planning.
 
 `ewb handoffs create` requires `--source-run <RUN_ID>`,
 `--source-run-digest <SHA256>`, and `--artifact <ARTIFACT_ID>`. It accepts no

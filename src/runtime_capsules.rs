@@ -21,6 +21,9 @@ pub struct RuntimeCapsuleVerification {
     pub descriptor_sha256: String,
     pub readiness: CapsuleReadinessState,
     pub blocker_codes: Vec<String>,
+    pub descriptor_claimed_readiness: CapsuleReadinessState,
+    pub descriptor_blocker_codes: Vec<String>,
+    pub execution_admission: &'static str,
     pub host_os_matches: bool,
     pub host_arch_matches: bool,
     pub tool_manifest_id: String,
@@ -141,8 +144,11 @@ pub fn verify(workspace: &Workspace, capsule_id: &str) -> Result<RuntimeCapsuleV
         capsule_id: record.capsule_id,
         record_digest: record.record_digest,
         descriptor_sha256: record.payload.descriptor_sha256,
-        readiness: capsule.readiness.state.clone(),
-        blocker_codes: capsule.readiness.blocker_codes.clone(),
+        readiness: CapsuleReadinessState::FailClosed,
+        blocker_codes: vec!["python_runtime_qualification_not_connected".to_owned()],
+        descriptor_claimed_readiness: capsule.readiness.state.clone(),
+        descriptor_blocker_codes: capsule.readiness.blocker_codes.clone(),
+        execution_admission: "not_granted_by_runtime_capsule",
         host_os_matches: capsule.platform.os == std::env::consts::OS,
         host_arch_matches: capsule.platform.arch == std::env::consts::ARCH,
         tool_manifest_id: capsule.operation_scope.tool_manifest_id.clone(),
@@ -187,14 +193,8 @@ pub fn planning_blocker(
             std::env::consts::ARCH
         );
     }
-    if capsule.readiness.state != CapsuleReadinessState::Ready {
-        bail!(
-            "{tool_manifest_id} planning remains fail_closed: runtime_capsule_not_ready; capsule {capsule_id} blockers: {}",
-            capsule.readiness.blocker_codes.join(",")
-        );
-    }
     bail!(
-        "{tool_manifest_id} planning remains fail_closed: python_capsule_execution_containment_unimplemented; capsule {capsule_id} record {} is exact-byte verified, but EWB does not yet provide OS-enforced no-network and child-process containment for Python execution",
+        "{tool_manifest_id} planning remains fail_closed: python_runtime_qualification_not_connected; capsule {capsule_id} record {} is an exact-byte inventory only, and descriptor-claimed readiness does not grant execution admission",
         record.record_digest
     )
 }
@@ -790,6 +790,20 @@ mod tests {
         assert_eq!(record.capsule_id, CAPSULE_ID);
         let verified = verify(&fixture.workspace, CAPSULE_ID).unwrap();
         assert_eq!(verified.verified_file_count, 2);
+        assert_eq!(verified.readiness, CapsuleReadinessState::FailClosed);
+        assert_eq!(
+            verified.blocker_codes,
+            ["python_runtime_qualification_not_connected"]
+        );
+        assert_eq!(
+            verified.descriptor_claimed_readiness,
+            CapsuleReadinessState::Ready
+        );
+        assert!(verified.descriptor_blocker_codes.is_empty());
+        assert_eq!(
+            verified.execution_admission,
+            "not_granted_by_runtime_capsule"
+        );
         assert_eq!(verified.authority_effect, "none");
         assert_eq!(list_verified(&fixture.workspace).unwrap().len(), 1);
     }
@@ -853,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    fn ready_capsule_reaches_exact_containment_blocker_without_planning() {
+    fn descriptor_ready_capsule_still_reaches_not_connected_blocker_without_planning() {
         let fixture = fixture(true);
         admit(&fixture.workspace, &fixture.descriptor, &fixture.root).unwrap();
 
@@ -865,9 +879,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(
-            format!("{error:#}").contains("python_capsule_execution_containment_unimplemented")
-        );
+        assert!(format!("{error:#}").contains("python_runtime_qualification_not_connected"));
         assert!(
             fixture
                 .workspace
@@ -931,11 +943,7 @@ mod tests {
             "phaseledger_measure",
         )
         .unwrap_err();
-        assert!(
-            format!("{error:#}").contains("runtime_capsule_not_ready")
-                || format!("{error:#}")
-                    .contains("python_capsule_execution_containment_unimplemented")
-        );
+        assert!(format!("{error:#}").contains("python_runtime_qualification_not_connected"));
     }
 
     #[test]
