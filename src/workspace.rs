@@ -1,7 +1,7 @@
 use crate::contracts::{
     ArtifactCapture, ArtifactDescriptor, ArtifactRecord, ArtifactStorage, Digest,
-    EvidenceHandoffRecord, NativeDeliveryQualificationRecord, PlanPayload, PlanRecord, RunRecord,
-    RuntimeCapsuleRecord, SubjectCandidateRecord,
+    EvidenceHandoffRecord, NativeDeliveryQualificationRecord, PlanPayload, PlanRecord,
+    PythonRuntimeQualificationRecord, RunRecord, RuntimeCapsuleRecord, SubjectCandidateRecord,
 };
 use crate::run_validation;
 use crate::strict_json;
@@ -65,6 +65,7 @@ impl Workspace {
             "capsules",
             "candidates",
             "qualifications",
+            "python-qualifications",
             "handoffs",
         ] {
             ensure_real_dir(&workspace.state.join(name))?;
@@ -153,6 +154,7 @@ impl Workspace {
             "capsules",
             "candidates",
             "qualifications",
+            "python-qualifications",
             "handoffs",
         ] {
             validate_real_dir(&self.state.join(name))?;
@@ -587,6 +589,50 @@ impl Workspace {
             .into_iter()
             .map(|artifact_id| self.load_artifact(&artifact_id))
             .collect()
+    }
+
+    pub fn write_python_runtime_qualification(
+        &self,
+        record: &PythonRuntimeQualificationRecord,
+    ) -> Result<()> {
+        validate_prefixed_id(&record.qualification_id, "qualification_")?;
+        let path = self
+            .state
+            .join("python-qualifications")
+            .join(format!("{}.json", record.qualification_id));
+        self.write_json_atomic(&path, record, true)
+    }
+
+    pub fn load_python_runtime_qualification(
+        &self,
+        qualification_id: &str,
+    ) -> Result<PythonRuntimeQualificationRecord> {
+        validate_prefixed_id(qualification_id, "qualification_")?;
+        let path = self
+            .state
+            .join("python-qualifications")
+            .join(format!("{qualification_id}.json"));
+        let record: PythonRuntimeQualificationRecord = read_strict_json(&path)?;
+        if record.schema_version != "python_runtime_qualification_record/v1"
+            || record.qualification_id != qualification_id
+            || digest_serialized(&record.payload)? != record.record_digest
+        {
+            bail!("Python runtime qualification record identity or digest mismatch");
+        }
+        Ok(record)
+    }
+
+    pub fn list_python_runtime_qualifications(
+        &self,
+    ) -> Result<Vec<PythonRuntimeQualificationRecord>> {
+        registry_record_ids(
+            &self.state.join("python-qualifications"),
+            "qualification_",
+            "Python runtime qualification",
+        )?
+        .into_iter()
+        .map(|qualification_id| self.load_python_runtime_qualification(&qualification_id))
+        .collect()
     }
 
     pub fn verify_descriptor(&self, descriptor: &ArtifactDescriptor) -> Result<PathBuf> {

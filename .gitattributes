@@ -5,3 +5,6 @@
 # Native qualification archives and exact checksum ledgers are evidence bytes.
 *.zip binary
 tests/fixtures/tomorrowci-qualification/** -text -eol
+
+# This embedded wrapper is a byte-level contract; checkout must not rewrite it.
+assets/python-runtime-wrapper-v1.py text eol=lf

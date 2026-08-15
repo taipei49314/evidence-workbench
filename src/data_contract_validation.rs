@@ -1,7 +1,8 @@
 use crate::contracts::{
     AuditReceipt, AuditTopology, CapsuleClosureState, CapsuleReadinessState, ContractArtifactRef,
-    Digest, EvidenceHandoff, IdeHandoff, PlanRecordRef, PlatformAssumptionState, RunRecordRef,
-    RuntimeCapsule, SubjectCandidate,
+    Digest, EvidenceHandoff, IdeHandoff, PlanRecordRef, PlatformAssumptionState,
+    PythonRuntimeQualification, PythonRuntimeQualificationRecord, RunRecordRef, RuntimeCapsule,
+    SubjectCandidate,
 };
 use crate::strict_json;
 use anyhow::{Context, Result, bail};
@@ -20,6 +21,34 @@ pub fn parse_runtime_capsule(bytes: &[u8]) -> Result<RuntimeCapsule> {
     let capsule = parse_contract(bytes, "runtime capsule")?;
     validate_runtime_capsule(&capsule)?;
     Ok(capsule)
+}
+
+pub fn parse_python_runtime_qualification(bytes: &[u8]) -> Result<PythonRuntimeQualification> {
+    let qualification = parse_contract(bytes, "Python runtime qualification")?;
+    crate::python_qualifications::validate_payload(&qualification)?;
+    Ok(qualification)
+}
+
+pub fn parse_python_runtime_qualification_record(
+    bytes: &[u8],
+) -> Result<PythonRuntimeQualificationRecord> {
+    let record: PythonRuntimeQualificationRecord =
+        parse_contract(bytes, "Python runtime qualification record")?;
+    if record.schema_version != "python_runtime_qualification_record/v1" {
+        bail!("unsupported Python runtime qualification record schema");
+    }
+    validate_prefixed_id(
+        &record.qualification_id,
+        "qualification_",
+        "Python runtime qualification id",
+    )?;
+    validate_sha256(&record.record_digest, "Python runtime qualification record")?;
+    crate::python_qualifications::validate_payload(&record.payload)?;
+    let actual = hex::encode(Sha256::digest(serde_json::to_vec(&record.payload)?));
+    if actual != record.record_digest {
+        bail!("Python runtime qualification record typed payload digest mismatch");
+    }
+    Ok(record)
 }
 
 pub fn parse_ide_handoff(bytes: &[u8]) -> Result<IdeHandoff> {
@@ -754,6 +783,10 @@ mod tests {
         include_bytes!("../contracts/examples/subject-candidate-v1.example.json");
     const CAPSULE_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/runtime-capsule-v1.example.json");
+    const PYTHON_QUALIFICATION_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/python-runtime-qualification-v1.example.json");
+    const PYTHON_QUALIFICATION_RECORD_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/python-runtime-qualification-record-v1.example.json");
     const HANDOFF_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/ide-handoff-v1.example.json");
     const EVIDENCE_HANDOFF_EXAMPLE: &[u8] =
@@ -773,6 +806,10 @@ mod tests {
     fn examples_parse_strictly_and_validate_semantics() {
         parse_subject_candidate(SUBJECT_EXAMPLE).expect("valid subject candidate example");
         parse_runtime_capsule(CAPSULE_EXAMPLE).expect("valid runtime capsule example");
+        parse_python_runtime_qualification(PYTHON_QUALIFICATION_EXAMPLE)
+            .expect("valid incomplete Python runtime qualification example");
+        parse_python_runtime_qualification_record(PYTHON_QUALIFICATION_RECORD_EXAMPLE)
+            .expect("valid incomplete Python runtime qualification record example");
         parse_ide_handoff(HANDOFF_EXAMPLE).expect("valid IDE handoff example");
         parse_evidence_handoff(EVIDENCE_HANDOFF_EXAMPLE).expect("valid evidence handoff example");
         let record_value = strict_json::parse_strict(EVIDENCE_HANDOFF_RECORD_EXAMPLE)
@@ -1411,6 +1448,8 @@ mod tests {
         for raw in [
             include_str!("../contracts/subject-candidate-v1.schema.json"),
             include_str!("../contracts/runtime-capsule-v1.schema.json"),
+            include_str!("../contracts/python-runtime-qualification-v1.schema.json"),
+            include_str!("../contracts/python-runtime-qualification-record-v1.schema.json"),
             include_str!("../contracts/native-delivery-qualification-v1.schema.json"),
             include_str!("../contracts/ide-handoff-v1.schema.json"),
             include_str!("../contracts/evidence-handoff-v1.schema.json"),

@@ -1,0 +1,128 @@
+{
+  "schema_version": "python_runtime_qualification_record/v1",
+  "qualification_id": "qualification_00000000000000000000000000000000",
+  "record_digest": "c01bd9655a446be562bd3a0b7a3347f1e157f89dba08d33701c1f3d074e24c4c",
+  "payload": {
+    "schema_version": "python_runtime_qualification/v1",
+    "observed_at": "2026-08-16T00:00:00Z",
+    "capsule_ref": {
+      "id": "capsule_00000000000000000000000000000000",
+      "record_digest": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "tool_ref": {
+      "manifest_id": "phaseledger",
+      "manifest_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "upstream_pin_ref": {
+      "tool_manifest_id": "phaseledger",
+      "pin_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "operation": "phaseledger_measure",
+    "recorder_identity": {
+      "version": "0.2.0",
+      "executable_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "platform_observation": {
+      "target": { "os": "windows", "arch": "x86_64", "abi": "cp313-win_amd64" },
+      "host": { "os": "windows", "arch": "x86_64" }
+    },
+    "runtime_inputs": {
+      "cpython_archive": {
+        "artifact_ref": {
+          "artifact_id": "artifact_11111111111111111111111111111111",
+          "record_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        "digest": { "algorithm": "sha256", "value": "6666666666666666666666666666666666666666666666666666666666666666" },
+        "byte_length": 10
+      },
+      "path_configuration": {
+        "path": "python313._pth",
+        "artifact": {
+          "artifact_ref": {
+            "artifact_id": "artifact_22222222222222222222222222222222",
+            "record_digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "digest": { "algorithm": "sha256", "value": "8888888888888888888888888888888888888888888888888888888888888888" },
+          "byte_length": 11
+        }
+      },
+      "wheel_records": [
+        {
+          "wheel": {
+            "artifact_ref": {
+              "artifact_id": "artifact_33333333333333333333333333333333",
+              "record_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+            },
+            "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            "byte_length": 12
+          },
+          "installed_record": {
+            "path": "site/phaseledger-0.6.0.dist-info/RECORD",
+            "artifact": {
+              "artifact_ref": {
+                "artifact_id": "artifact_44444444444444444444444444444444",
+                "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+              "byte_length": 13
+            }
+          }
+        }
+      ],
+      "wrapper": {
+        "contract_id": "evidence-workbench-python-runtime-wrapper/v1",
+        "artifact": {
+          "artifact_ref": {
+            "artifact_id": "artifact_55555555555555555555555555555555",
+            "record_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          "digest": { "algorithm": "sha256", "value": "0bb5b8795ad0c97eb8ec94f898d7215eabe19891a70740bccee3d834a98deb9b" },
+          "byte_length": 261
+        }
+      }
+    },
+    "launch_contract": {
+      "mode": "direct_exec",
+      "launcher_source": "capsule_launcher",
+      "fixed_arguments": ["-I", "-S", "-B", "-X", "utf8"],
+      "wrapper_source": "qualified_wrapper",
+      "argument_tail": "trusted_adapter_derived_only",
+      "cwd": "ewb_owned_private_scratch",
+      "environment": {
+        "inheritance": "none",
+        "variables": [
+          { "name": "PATH", "source": "ewb_owned_empty_directory" },
+          { "name": "SystemRoot", "source": "canonical_host_system_root" },
+          { "name": "TEMP", "source": "ewb_owned_private_scratch" },
+          { "name": "TMP", "source": "ewb_owned_private_scratch" },
+          { "name": "WINDIR", "source": "canonical_host_windows_directory" }
+        ],
+        "other_variables": "absent"
+      },
+      "layout": {
+        "runtime": "runtime", "subject": "subject", "scratch": "scratch",
+        "wrapper": "wrapper/python-runtime-wrapper-v1.py"
+      }
+    },
+    "checks": [
+      { "code": "cpython_archive_semantics", "state": "not_implemented", "evidence_refs": [] },
+      { "code": "os_network_egress_denial", "state": "not_implemented", "evidence_refs": [] },
+      { "code": "python_active_process_limit_one", "state": "not_implemented", "evidence_refs": [] },
+      { "code": "python_creation_time_job_assignment", "state": "not_implemented", "evidence_refs": [] },
+      { "code": "python_launch_harness", "state": "not_implemented", "evidence_refs": [] },
+      { "code": "python_path_configuration_isolation", "state": "not_implemented", "evidence_refs": [] },
+      { "code": "python_private_materialization", "state": "not_implemented", "evidence_refs": [] },
+      { "code": "wheel_record_closure", "state": "not_implemented", "evidence_refs": [] }
+    ],
+    "qualification_state": {
+      "state": "incomplete",
+      "blocker_codes": [
+        "cpython_archive_semantics", "os_network_egress_denial",
+        "python_active_process_limit_one", "python_creation_time_job_assignment",
+        "python_launch_harness", "python_path_configuration_isolation",
+        "python_private_materialization", "wheel_record_closure"
+      ]
+    },
+    "authority_effect": "none"
+  }
+}

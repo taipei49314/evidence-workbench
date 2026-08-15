@@ -3,7 +3,8 @@ use crate::contracts::{
 };
 use crate::{
     build_identity, candidate_pins, evidence_handoffs, git_subject, manifests, native,
-    native_qualifications, runtime_capsules, subject_candidates, upstream_pins, workspace,
+    native_qualifications, python_qualifications, runtime_capsules, subject_candidates,
+    upstream_pins, workspace,
 };
 use anyhow::{Context, Result, bail};
 use chrono::{SecondsFormat, Utc};
@@ -48,6 +49,8 @@ pub enum Command {
     Capsules(CapsulesCommand),
     /// Admit durable native-delivery qualification evidence from exact local bytes.
     Qualifications(QualificationsCommand),
+    /// Create incomplete Python runtime qualification records without executing Python.
+    PythonQualifications(PythonQualificationsCommand),
     /// Import and inspect untrusted exact-byte GitHub discovery candidates.
     Candidates(CandidatesCommand),
     /// Inspect stored execution plans without launching native tools.
@@ -168,6 +171,35 @@ pub enum QualificationsSubcommand {
     /// Show and re-verify one complete qualification record.
     Show { qualification_id: String },
     /// Re-hash every durable CAS reference and all semantic bindings.
+    Verify { qualification_id: String },
+}
+
+#[derive(Debug, Args)]
+pub struct PythonQualificationsCommand {
+    #[command(subcommand)]
+    pub command: PythonQualificationsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PythonQualificationsSubcommand {
+    /// Bind exact runtime inventory inputs into an incomplete, non-authorizing record.
+    Create {
+        #[arg(long, value_name = "CAPSULE_ID")]
+        capsule: String,
+        #[arg(long, value_name = "ARTIFACT_ID")]
+        cpython_archive_artifact: String,
+        #[arg(long, value_name = "CAPSULE_PATH")]
+        path_configuration: String,
+        #[arg(long, value_name = "ARTIFACT_ID", required = true)]
+        wheel_artifact: Vec<String>,
+        #[arg(long, value_name = "CAPSULE_PATH", required = true)]
+        installed_record_path: Vec<String>,
+    },
+    /// List only after re-verifying every record, reference, and CAS object.
+    List,
+    /// Show one record only after re-verifying every reference and CAS object.
+    Show { qualification_id: String },
+    /// Re-verify the typed payload digest, all bindings, and incomplete state.
     Verify { qualification_id: String },
 }
 
@@ -334,6 +366,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
         Command::Tools(command) => tools(command),
         Command::Capsules(command) => capsules(cli, command),
         Command::Qualifications(command) => qualifications(cli, command),
+        Command::PythonQualifications(command) => python_qualifications(cli, command),
         Command::Candidates(command) => candidates(cli, command),
         Command::Plans(command) => plans(cli, command),
         Command::Runs(command) => runs(cli, command),
@@ -588,6 +621,47 @@ fn qualifications(cli: &Cli, command: &QualificationsCommand) -> Result<CommandO
         QualificationsSubcommand::Verify { qualification_id } => success(
             "qualifications.verify",
             native_qualifications::verify(&workspace, qualification_id)?,
+        ),
+    }
+}
+
+fn python_qualifications(
+    cli: &Cli,
+    command: &PythonQualificationsCommand,
+) -> Result<CommandOutcome> {
+    let workspace = open_workspace(cli)?;
+    match &command.command {
+        PythonQualificationsSubcommand::Create {
+            capsule,
+            cpython_archive_artifact,
+            path_configuration,
+            wheel_artifact,
+            installed_record_path,
+        } => success(
+            "python-qualifications.create",
+            serde_json::to_value(python_qualifications::create(
+                &workspace,
+                capsule,
+                cpython_archive_artifact,
+                path_configuration,
+                wheel_artifact,
+                installed_record_path,
+            )?)?,
+        ),
+        PythonQualificationsSubcommand::List => success(
+            "python-qualifications.list",
+            serde_json::to_value(python_qualifications::list_verified(&workspace)?)?,
+        ),
+        PythonQualificationsSubcommand::Show { qualification_id } => success(
+            "python-qualifications.show",
+            serde_json::to_value(python_qualifications::load_verified(
+                &workspace,
+                qualification_id,
+            )?)?,
+        ),
+        PythonQualificationsSubcommand::Verify { qualification_id } => success(
+            "python-qualifications.verify",
+            serde_json::to_value(python_qualifications::verify(&workspace, qualification_id)?)?,
         ),
     }
 }
