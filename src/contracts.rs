@@ -649,6 +649,15 @@ pub struct EvidenceHandoff {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceHandoffRecord {
+    pub schema_version: String,
+    /// SHA-256 over compact typed JSON for `handoff`, not the enclosing file bytes.
+    pub record_digest: String,
+    pub handoff: EvidenceHandoff,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceHandoffRelationship {
     CapturedRunArtifact,

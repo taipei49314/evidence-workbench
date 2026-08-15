@@ -567,6 +567,8 @@ mod tests {
         include_bytes!("../contracts/examples/ide-handoff-v1.example.json");
     const EVIDENCE_HANDOFF_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/evidence-handoff-v1.example.json");
+    const EVIDENCE_HANDOFF_RECORD_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/evidence-handoff-record-v1.example.json");
     const CLI_SUCCESS_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/ewb-cli-envelope-v1.success.example.json");
     const CLI_FAILURE_EXAMPLE: &[u8] =
@@ -578,6 +580,16 @@ mod tests {
         parse_runtime_capsule(CAPSULE_EXAMPLE).expect("valid runtime capsule example");
         parse_ide_handoff(HANDOFF_EXAMPLE).expect("valid IDE handoff example");
         parse_evidence_handoff(EVIDENCE_HANDOFF_EXAMPLE).expect("valid evidence handoff example");
+        let record_value = strict_json::parse_strict(EVIDENCE_HANDOFF_RECORD_EXAMPLE)
+            .expect("strict evidence handoff record example");
+        let record: crate::contracts::EvidenceHandoffRecord =
+            serde_json::from_value(record_value).expect("closed evidence handoff record example");
+        validate_evidence_handoff(&record.handoff).expect("valid wrapped handoff semantics");
+        assert_eq!(record.schema_version, "evidence_handoff_record/v1");
+        assert_eq!(
+            record.record_digest,
+            crate::workspace::digest_serialized(&record.handoff).unwrap()
+        );
         parse_cli_envelope(CLI_SUCCESS_EXAMPLE).expect("valid CLI success envelope example");
         parse_cli_envelope(CLI_FAILURE_EXAMPLE).expect("valid CLI failure envelope example");
     }
@@ -824,6 +836,7 @@ mod tests {
             include_str!("../contracts/native-delivery-qualification-v1.schema.json"),
             include_str!("../contracts/ide-handoff-v1.schema.json"),
             include_str!("../contracts/evidence-handoff-v1.schema.json"),
+            include_str!("../contracts/evidence-handoff-record-v1.schema.json"),
             include_str!("../contracts/build-identity-v1.schema.json"),
             include_str!("../contracts/ewb-cli-envelope-v1.schema.json"),
         ] {

@@ -91,6 +91,12 @@ ewb --json tools list
 
 `doctor` is read-only and does not launch native version commands. `tools probe` is also rejected for every `fail_closed` adapter; it may launch a version probe only after a future production adapter has an admitted complete runtime closure. Trusted manifests are compiled into the `ewb` binary; files placed under `.ewb/manifests` cannot grant a new executable, capability, result, or authority claim.
 
+`.ewb/handoffs` is a required workspace directory. After upgrading an existing
+workspace, run the same idempotent `ewb --json --workspace <PATH> init` command
+once to add it. Until then, normal workspace opens and registry commands fail
+closed, while `doctor` reports the layout as unhealthy. A missing handoff
+directory is never treated as an empty registry.
+
 The durable registries have symmetric read-only inspection surfaces:
 
 ```powershell
@@ -99,14 +105,19 @@ ewb --json --workspace C:\evidence-workspace plans show <PLAN_ID>
 ewb --json --workspace C:\evidence-workspace artifacts list
 ewb --json --workspace C:\evidence-workspace artifacts show <ARTIFACT_ID>
 ewb --json --workspace C:\evidence-workspace qualifications list
+ewb --json --workspace C:\evidence-workspace handoffs list
+ewb --json --workspace C:\evidence-workspace handoffs show <HANDOFF_ID>
 ```
 
 Each command returns the complete stored record only after re-verifying its
 record digest and all locally bound bytes. A list is atomic: one malformed,
 linked, unexpected, or stale registry entry fails the whole command rather than
-returning partial data. A digest read back through `plans show` is inspection
-data; it must never replace the reviewed digest retained when `runs plan`
-created the plan.
+returning partial data. A digest read back through `plans show` or
+`handoffs show` is inspection data; it must never replace the digest retained
+when the plan or handoff was created. Likewise, `handoffs create` requires the
+source-run digest retained from the original `runs execute` response; a current
+digest reread through `runs show` or `runs list` cannot replace that retained
+identity after registry state has been rewritten.
 
 ### Runtime capsule registry
 
@@ -284,17 +295,39 @@ ewb --json --workspace C:\evidence-workspace artifacts verify `
 Objects live at `.ewb/objects/sha256/<prefix>/<suffix>`. Records use generated ASCII IDs and content-addressed URIs. Import copies raw bytes while hashing, uses atomic commit, and stores an empty `transforms` list. JSON projections are never substituted for the native artifact.
 
 [`evidence-handoff/v1`](contracts/evidence-handoff-v1.schema.json) defines a
-closed, reference-only plan/run/artifact descriptor for future cross-audit
-transport. It fixes the relationship to `captured_run_artifact`, requires the
-consumer to treat the referenced artifact as `untrusted_exact_bytes`, and has
-`authority_effect: none`. This release intentionally has no handoff registry or
-handoff CLI command. Parsing the descriptor does not verify run-to-plan
-lineage, run membership of the artifact, or CAS bytes; an eventual registry
-must independently verify all of them. `ide-handoff/v1` remains available as a
-separate backward-compatible optional projection. The three `record_digest`
-values are EWB's compact typed-JSON digests of `PlanPayload`, `InstrumentRun`,
-and `ArtifactDescriptor`; they are not hashes of the enclosing record files.
-`handoff_id` is an opaque typed ID, not a content digest or authenticity proof.
+closed, reference-only plan/run/artifact descriptor. It fixes the relationship
+to `captured_run_artifact`, requires the consumer to treat the referenced
+artifact as `untrusted_exact_bytes`, and has `authority_effect: none`. Parsing
+that standalone descriptor still proves no lineage. The workspace-aware
+[`evidence_handoff_record/v1`](contracts/evidence-handoff-record-v1.schema.json)
+registry supplies that separate verification boundary:
+
+```powershell
+$handoff = ewb --json --workspace C:\evidence-workspace handoffs create `
+  --source-run <RUN_ID> `
+  --source-run-digest <RETAINED_RUN_RECORD_DIGEST> `
+  --artifact <ARTIFACT_ID> | ConvertFrom-Json
+
+ewb --json --workspace C:\evidence-workspace handoffs verify `
+  $handoff.data.handoff.handoff_id `
+  --handoff-digest $handoff.data.record_digest
+```
+
+Create accepts no plan identity or execution input. It reloads the producer
+run using the caller-retained run digest, derives the plan reference from that
+run, requires the complete verified artifact descriptor to occur exactly once
+in the run, and re-hashes the artifact CAS bytes. Create, list, show, and verify
+all repeat the same-workspace lineage checks; verify additionally requires
+the caller-retained handoff digest. They return complete records without a
+`status`, `verdict`, `passed`, score, command, argument vector, native
+interpretation, or authority widening. `ide-handoff/v1` remains a separate
+backward-compatible optional projection.
+
+The three referenced `record_digest` values are EWB's compact typed-JSON
+digests of `PlanPayload`, `InstrumentRun`, and `ArtifactDescriptor`; the handoff
+record digest uses its `EvidenceHandoff` object. They are not hashes of the
+enclosing record files. `handoff_id` is an opaque typed ID, not a content digest
+or authenticity proof.
 
 ## JSON and exit policy
 
@@ -332,6 +365,7 @@ credentials.
 - [`contracts/build-identity-v1.schema.json`](contracts/build-identity-v1.schema.json)
 - [`contracts/ewb-cli-envelope-v1.schema.json`](contracts/ewb-cli-envelope-v1.schema.json)
 - [`contracts/evidence-handoff-v1.schema.json`](contracts/evidence-handoff-v1.schema.json)
+- [`contracts/evidence-handoff-record-v1.schema.json`](contracts/evidence-handoff-record-v1.schema.json)
 - [`contracts/ide-handoff-v1.schema.json`](contracts/ide-handoff-v1.schema.json)
 
 The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or aggregate result field. A native projection carries its own namespace, value, `projection_only: true`, artifact ID, and exact locator. In `instrument_run/v1`, `native_authority` is schema-constrained to `not_reported`, and artifact `source_run_id` is constrained to `null` rather than asserting unverified lineage; either feature requires a new contract version with native rebinding rather than widening v1 in place.

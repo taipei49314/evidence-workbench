@@ -37,18 +37,33 @@ authority.
   referenced artifact as `untrusted_exact_bytes`, and `authority_effect` is
   fixed to `none`. It cannot carry a command, argument vector, parameters,
   capabilities, status, verdict, pass state, score, or authority claim. Parsing
-  validates the closed shape, IDs, digests, and timestamp only. A future
-  registry must independently load all three records, verify the run-to-plan
-  link, confirm the exact artifact descriptor is in the run, and verify its CAS
-  bytes before relying on the reference. No handoff registry or CLI command is
-  defined by this contract-only version. Each `record_digest` is EWB's SHA-256
-  over compact typed JSON: `PlanPayload`, `InstrumentRun`, or
-  `ArtifactDescriptor`, respectively. It is not the raw SHA-256 of the enclosing
-  registry-record file. `handoff_id` is only an opaque typed ID in v1; it is not
-  a content digest, authenticity proof, or source of trust.
+  validates the closed shape, IDs, digests, and timestamp only. The
+  `evidence_handoff_record/v1` workspace registry separately reloads all three
+  records, verifies the run-to-plan link, confirms that the complete artifact
+  descriptor occurs exactly once in the run, and re-verifies its CAS bytes on
+  create, list, show, and verify. Each referenced `record_digest` is EWB's
+  SHA-256 over compact typed JSON: `PlanPayload`, `InstrumentRun`, or
+  `ArtifactDescriptor`, respectively. The handoff registry record digest is the
+  same construction over its `EvidenceHandoff` object. None is the raw SHA-256
+  of an enclosing registry-record file. `handoff_id` is only an opaque typed ID
+  in v1; it is not a content digest, authenticity proof, or source of trust.
+  Strict Rust loading requires the registry filename to match the wrapped
+  handoff ID.
 
 Every object shape is closed with `additionalProperties: false`. Rust parsing
 also rejects duplicate JSON keys and applies semantic cross-field validation.
+
+`ewb handoffs create` requires `--source-run <RUN_ID>`,
+`--source-run-digest <SHA256>`, and `--artifact <ARTIFACT_ID>`. It accepts no
+plan reference, command, argument vector, or authority input. It requires the
+caller-retained producer-run digest, derives the plan reference from that
+verified run, and derives the artifact record digest from the exact matching
+workspace record. Create performs that complete preflight before its atomic
+unique write, then reloads and re-verifies the persisted record before
+returning. `handoffs verify` additionally requires the caller-retained handoff
+digest. `handoffs show` and `list` are inspection surfaces, but repeat the same
+full workspace-lineage and exact-byte checks. A successful EWB command only
+means those checks completed; it is not a native or aggregate verdict.
 
 `ewb candidates import --file <FILE>` first parses the exact descriptor bytes
 and verifies the full source artifact record digest, descriptor digest, object
