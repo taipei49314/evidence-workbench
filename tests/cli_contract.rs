@@ -2840,7 +2840,9 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
         let output = child.wait_with_output().unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "artifact child failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
