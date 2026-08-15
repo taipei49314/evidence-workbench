@@ -10,7 +10,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -978,15 +978,21 @@ impl Workspace {
         file.sync_all()?;
         drop(file);
         if unique {
-            // Linking a fully synced temp file provides create-new semantics on both
-            // Unix and Windows; unlike rename, it cannot replace a concurrent record.
-            if let Err(error) = retry_transient(|| fs::hard_link(&temporary, destination)) {
-                let _ = retry_transient(|| fs::remove_file(&temporary));
+            if let Err(error) = retry_transient(|| publish_file_no_replace(&temporary, destination))
+            {
+                if let Err(cleanup_error) = retry_transient(|| fs::remove_file(&temporary)) {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "cannot atomically create record {}; cleanup of unpublished temporary file {} also failed: {cleanup_error}",
+                            destination.display(),
+                            temporary.display()
+                        )
+                    });
+                }
                 return Err(error).with_context(|| {
                     format!("cannot atomically create record {}", destination.display())
                 });
             }
-            retry_transient(|| fs::remove_file(&temporary))?;
         } else if let Err(error) = fs::rename(&temporary, destination) {
             let _ = fs::remove_file(&temporary);
             return Err(error).with_context(|| {
@@ -1284,7 +1290,7 @@ fn file_has_single_link(file: &File, _metadata: &fs::Metadata) -> Result<bool> {
     // SAFETY: file owns a live Windows file handle and information is writable.
     let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
     if ok == 0 {
-        bail!("cannot query file link identity");
+        return Err(io::Error::last_os_error()).context("cannot query file link identity");
     }
     Ok(information.nNumberOfLinks == 1)
 }
@@ -1300,16 +1306,38 @@ fn file_has_single_link(_file: &File, _metadata: &fs::Metadata) -> Result<bool> 
     Ok(false)
 }
 
-fn verify_file(path: &Path, expected_digest: &str, expected_length: u64) -> Result<()> {
+#[derive(Debug)]
+struct MultipleLinkNames;
+
+impl std::fmt::Display for MultipleLinkNames {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("private file must be a regular single-link file")
+    }
+}
+
+impl std::error::Error for MultipleLinkNames {}
+
+fn open_verified_private_file(path: &Path) -> Result<File> {
     let path_metadata = fs::symlink_metadata(path)?;
     if !path_metadata.is_file() || is_reparse(&path_metadata) {
         bail!("private file must be a regular single-link file");
     }
-    let mut file = open_artifact_read_no_write_share(path)?;
+    let file = open_artifact_read_no_write_share(path)?;
     let metadata = file.metadata()?;
-    if !metadata.is_file() || is_reparse(&metadata) || !file_has_single_link(&file, &metadata)? {
+    if !metadata.is_file() || is_reparse(&metadata) {
         bail!("private file must be a regular single-link file");
     }
+    if !file_has_single_link(&file, &metadata)? {
+        return Err(MultipleLinkNames.into());
+    }
+    Ok(file)
+}
+
+fn verify_open_private_file(
+    mut file: File,
+    expected_digest: &str,
+    expected_length: u64,
+) -> Result<()> {
     let mut hasher = Sha256::new();
     let mut actual_length = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
@@ -1328,6 +1356,14 @@ fn verify_file(path: &Path, expected_digest: &str, expected_length: u64) -> Resu
         bail!("artifact bytes do not match their recorded digest and length");
     }
     Ok(())
+}
+
+fn verify_file(path: &Path, expected_digest: &str, expected_length: u64) -> Result<()> {
+    verify_open_private_file(
+        open_verified_private_file(path)?,
+        expected_digest,
+        expected_length,
+    )
 }
 
 fn read_verified_file(path: &Path, expected_digest: &str, expected_length: u64) -> Result<Vec<u8>> {
@@ -1427,27 +1463,139 @@ fn commit_content_object(
     expected_digest: &str,
     expected_length: u64,
 ) -> Result<()> {
-    for attempt in 0..25 {
-        if destination.is_file() {
-            let _ = retry_transient(|| fs::remove_file(temporary));
-            return verify_file(destination, expected_digest, expected_length);
+    match retry_transient(|| publish_file_no_replace(temporary, destination)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            retry_transient(|| fs::remove_file(temporary)).with_context(|| {
+                format!(
+                    "artifact object already exists, but loser temporary file {} could not be removed",
+                    temporary.display()
+                )
+            })?;
+            verify_existing_content_object(destination, expected_digest, expected_length)
         }
-        match fs::rename(temporary, destination) {
-            Ok(()) => return Ok(()),
-            Err(error) if is_transient(&error) && attempt < 24 => {
+        Err(error) => {
+            if let Err(cleanup_error) = retry_transient(|| fs::remove_file(temporary)) {
+                return Err(error).with_context(|| {
+                    format!(
+                        "cannot atomically publish artifact object {}; cleanup of unpublished temporary file {} also failed: {cleanup_error}",
+                        destination.display(),
+                        temporary.display()
+                    )
+                });
+            }
+            Err(error).with_context(|| {
+                format!(
+                    "cannot atomically publish artifact object {}",
+                    destination.display()
+                )
+            })
+        }
+    }
+}
+
+fn verify_existing_content_object(
+    destination: &Path,
+    expected_digest: &str,
+    expected_length: u64,
+) -> Result<()> {
+    for attempt in 0..25 {
+        match open_verified_private_file(destination) {
+            Ok(file) => {
+                return verify_open_private_file(file, expected_digest, expected_length)
+                    .with_context(|| {
+                        format!(
+                            "existing artifact object {} failed immutable-byte verification",
+                            destination.display()
+                        )
+                    });
+            }
+            Err(error) if is_retryable_existing_object_open(&error) && attempt < 24 => {
                 thread::sleep(Duration::from_millis(10));
             }
             Err(error) => {
-                if destination.is_file() {
-                    let _ = retry_transient(|| fs::remove_file(temporary));
-                    return verify_file(destination, expected_digest, expected_length);
-                }
-                let _ = retry_transient(|| fs::remove_file(temporary));
-                return Err(error).context("cannot atomically commit artifact object");
+                return Err(error).with_context(|| {
+                    format!(
+                        "cannot open existing artifact object {} for verification",
+                        destination.display()
+                    )
+                });
             }
         }
     }
-    unreachable!("bounded object commit loop always returns")
+    unreachable!("bounded existing-object verification loop always returns")
+}
+
+fn has_transient_io_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<io::Error>())
+        .any(is_transient)
+}
+
+#[cfg(windows)]
+fn is_retryable_existing_object_open(error: &anyhow::Error) -> bool {
+    has_transient_io_error(error)
+}
+
+#[cfg(not(windows))]
+fn is_retryable_existing_object_open(error: &anyhow::Error) -> bool {
+    // The portable no-replace fallback briefly has two names between link and
+    // unlink. Bound that publication window, but never accept a persistent
+    // external hard link as a valid object.
+    has_transient_io_error(error) || error.downcast_ref::<MultipleLinkNames>().is_some()
+}
+
+#[cfg(windows)]
+fn publish_file_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    fn wide_path(path: &Path) -> io::Result<Vec<u16>> {
+        let mut wide = path.as_os_str().encode_wide().collect::<Vec<_>>();
+        if wide.contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Windows path contains an embedded NUL",
+            ));
+        }
+        wide.push(0);
+        Ok(wide)
+    }
+
+    let source = wide_path(source)?;
+    let destination = wide_path(destination)?;
+    // Flags zero is a same-volume move with no replacement or copy fallback.
+    // Success consumes the source name, so no hard-link cleanup window exists.
+    let moved = unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), 0) };
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn publish_file_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    // Stable Rust has no portable rename-without-replacement primitive. Keep the
+    // existing same-filesystem hard-link fallback, but roll the destination back
+    // if unlinking the source fails instead of reporting a clean commit with two
+    // names. Callers retain an explicit error if rollback itself is impossible.
+    fs::hard_link(source, destination)?;
+    if let Err(unlink_error) = fs::remove_file(source) {
+        return match fs::remove_file(destination) {
+            Ok(()) => Err(io::Error::new(
+                unlink_error.kind(),
+                format!(
+                    "could not remove source after no-replace link; destination was rolled back: {unlink_error}"
+                ),
+            )),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "could not remove source after no-replace link ({unlink_error}); destination rollback also failed ({rollback_error})"
+            ))),
+        };
+    }
+    Ok(())
 }
 
 fn retry_transient<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
@@ -1469,12 +1617,134 @@ fn is_transient(error: &std::io::Error) -> bool {
         std::io::ErrorKind::PermissionDenied
             | std::io::ErrorKind::WouldBlock
             | std::io::ErrorKind::Interrupted
+    ) || is_windows_sharing_or_lock_violation(error)
+}
+
+#[cfg(windows)]
+fn is_windows_sharing_or_lock_violation(error: &io::Error) -> bool {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
+    matches!(
+        error.raw_os_error(),
+        Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
     )
+}
+
+#[cfg(not(windows))]
+fn is_windows_sharing_or_lock_violation(_error: &io::Error) -> bool {
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_replace_publish_consumes_source_and_creates_single_link() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("source.tmp");
+        let destination = temporary.path().join("destination.json");
+        let expected = b"complete record\n";
+        fs::write(&source, expected).unwrap();
+
+        publish_file_no_replace(&source, &destination).unwrap();
+
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), expected);
+        let file = File::open(&destination).unwrap();
+        let metadata = file.metadata().unwrap();
+        assert!(file_has_single_link(&file, &metadata).unwrap());
+    }
+
+    #[test]
+    fn no_replace_publish_preserves_existing_destination() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("source.tmp");
+        let destination = temporary.path().join("destination.json");
+        fs::write(&source, b"replacement").unwrap();
+        fs::write(&destination, b"sentinel").unwrap();
+
+        let error = publish_file_no_replace(&source, &destination).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&destination).unwrap(), b"sentinel");
+        assert_eq!(fs::read(&source).unwrap(), b"replacement");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn existing_cas_verification_retries_a_transient_share_lock() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::sync::mpsc;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("object.tmp");
+        let destination = temporary.path().join("object");
+        let expected = b"one immutable object";
+        fs::write(&source, expected).unwrap();
+        fs::write(&destination, expected).unwrap();
+        let digest = hex::encode(Sha256::digest(expected));
+        let locked = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&destination)
+            .unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let releaser = thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            thread::sleep(Duration::from_millis(50));
+            drop(locked);
+        });
+        ready_rx.recv().unwrap();
+
+        commit_content_object(&source, &destination, &digest, expected.len() as u64).unwrap();
+
+        releaser.join().unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_cas_verification_waits_for_the_fallback_publish_link_to_clear() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("object");
+        let winner_temporary = temporary.path().join("winner-object.tmp");
+        let expected = b"one immutable object";
+        fs::write(&destination, expected).unwrap();
+        fs::hard_link(&destination, &winner_temporary).unwrap();
+        let digest = hex::encode(Sha256::digest(expected));
+        let releaser = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            fs::remove_file(winner_temporary).unwrap();
+        });
+
+        verify_existing_content_object(&destination, &digest, expected.len() as u64).unwrap();
+
+        releaser.join().unwrap();
+        verify_file(&destination, &digest, expected.len() as u64).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_cas_verification_rejects_a_persistent_external_hard_link() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("object");
+        let external_alias = temporary.path().join("external-alias");
+        let expected = b"one immutable object";
+        fs::write(&destination, expected).unwrap();
+        fs::hard_link(&destination, &external_alias).unwrap();
+        let digest = hex::encode(Sha256::digest(expected));
+
+        let error = verify_existing_content_object(
+            &destination,
+            &digest,
+            u64::try_from(expected.len()).unwrap(),
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("regular single-link file"));
+    }
 
     #[test]
     fn verified_descriptor_returns_the_exact_hashed_bytes() {
