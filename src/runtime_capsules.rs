@@ -244,7 +244,9 @@ pub fn snapshot_descriptor(
     }
 
     let has_stdlib = files.keys().any(|path| is_stdlib_marker(path));
-    let has_first_party = files.keys().any(|path| path.to_ascii_lowercase().contains("phaseledger"))
+    let has_first_party = files
+        .keys()
+        .any(|path| path.to_ascii_lowercase().contains("phaseledger"))
         || tool_manifest_id != "phaseledger";
 
     let mut missing_paths = Vec::new();
@@ -264,8 +266,8 @@ pub fn snapshot_descriptor(
     blocker_codes.sort();
     blocker_codes.dedup();
 
-    let inventoried_file_count = u64::try_from(supporting_files.len())
-        .context("supporting-file inventory is too large")?;
+    let inventoried_file_count =
+        u64::try_from(supporting_files.len()).context("supporting-file inventory is too large")?;
     let declared_file_count = inventoried_file_count + u64::try_from(missing_paths.len())?;
     let inventory_digest = workspace::digest_serialized(&supporting_files)?;
     let (closure_state, missing_paths) = if missing_paths.is_empty() {
@@ -914,7 +916,10 @@ mod tests {
                 .any(|code| code == "python_stdlib_not_included")
         );
         assert_eq!(capsule.authority_effect, ContractAuthorityEffect::None);
-        assert_eq!(capsule.transitive_closure.state, CapsuleClosureState::Incomplete);
+        assert_eq!(
+            capsule.transitive_closure.state,
+            CapsuleClosureState::Incomplete
+        );
 
         let descriptor = temp.path().join("runtime-capsule.json");
         fs::write(&descriptor, serde_json::to_vec_pretty(&capsule).unwrap()).unwrap();
@@ -928,7 +933,8 @@ mod tests {
         .unwrap_err();
         assert!(
             format!("{error:#}").contains("runtime_capsule_not_ready")
-                || format!("{error:#}").contains("python_capsule_execution_containment_unimplemented")
+                || format!("{error:#}")
+                    .contains("python_capsule_execution_containment_unimplemented")
         );
     }
 
@@ -950,12 +956,17 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(capsule.transitive_closure.state, CapsuleClosureState::Complete);
-        assert!(!capsule
-            .readiness
-            .blocker_codes
-            .iter()
-            .any(|code| code == "python_stdlib_not_included"));
+        assert_eq!(
+            capsule.transitive_closure.state,
+            CapsuleClosureState::Complete
+        );
+        assert!(
+            !capsule
+                .readiness
+                .blocker_codes
+                .iter()
+                .any(|code| code == "python_stdlib_not_included")
+        );
         assert_eq!(capsule.readiness.state, CapsuleReadinessState::FailClosed);
     }
 }

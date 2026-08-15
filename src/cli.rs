@@ -445,17 +445,10 @@ fn capsules(cli: &Cli, command: &CapsulesCommand) -> Result<CommandOutcome> {
         abi,
     } = &command.command
     {
-        let capsule = runtime_capsules::snapshot_descriptor(
-            root,
-            launcher.as_deref(),
-            tool,
-            operation,
-            abi,
-        )?;
-        if let Some(parent) = out.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).context("cannot create snapshot output directory")?;
-            }
+        let capsule =
+            runtime_capsules::snapshot_descriptor(root, launcher.as_deref(), tool, operation, abi)?;
+        if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).context("cannot create snapshot output directory")?;
         }
         fs::write(out, serde_json::to_vec_pretty(&capsule)?)
             .context("cannot write runtime capsule snapshot")?;
@@ -480,7 +473,9 @@ fn capsules(cli: &Cli, command: &CapsulesCommand) -> Result<CommandOutcome> {
             "capsules.verify",
             serde_json::to_value(runtime_capsules::verify(&workspace, capsule_id)?)?,
         ),
-        CapsulesSubcommand::Snapshot { .. } => unreachable!("snapshot handled before workspace open"),
+        CapsulesSubcommand::Snapshot { .. } => {
+            unreachable!("snapshot handled before workspace open")
+        }
     }
 }
 
