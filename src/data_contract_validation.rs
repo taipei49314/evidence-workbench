@@ -27,6 +27,50 @@ pub fn parse_ide_handoff(bytes: &[u8]) -> Result<IdeHandoff> {
     Ok(handoff)
 }
 
+pub fn parse_cli_envelope(bytes: &[u8]) -> Result<serde_json::Value> {
+    let value = strict_json::parse_strict(bytes).context("invalid EWB CLI envelope")?;
+    validate_cli_envelope(&value)?;
+    Ok(value)
+}
+
+pub fn validate_cli_envelope(value: &serde_json::Value) -> Result<()> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("EWB CLI envelope must be an object"))?;
+    match object.get("ok") {
+        Some(serde_json::Value::Bool(true)) => {
+            validate_exact_object_keys(object, &["ok", "command", "data"], "success envelope")?;
+            let command = object
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("success envelope command must be a string"))?;
+            validate_cli_command(command)?;
+        }
+        Some(serde_json::Value::Bool(false)) => {
+            validate_exact_object_keys(object, &["ok", "error"], "failure envelope")?;
+            let error = object
+                .get("error")
+                .and_then(serde_json::Value::as_object)
+                .ok_or_else(|| anyhow::anyhow!("failure envelope error must be an object"))?;
+            validate_exact_object_keys(error, &["code", "message"], "CLI error")?;
+            let code = error
+                .get("code")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("CLI error code must be a string"))?;
+            validate_cli_error_code(code)?;
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("CLI error message must be a string"))?;
+            if message.is_empty() {
+                bail!("CLI error message must not be empty");
+            }
+        }
+        _ => bail!("EWB CLI envelope ok must be a boolean"),
+    }
+    Ok(())
+}
+
 fn parse_contract<T: DeserializeOwned>(bytes: &[u8], label: &str) -> Result<T> {
     let value = strict_json::parse_strict(bytes).with_context(|| format!("invalid {label}"))?;
     serde_json::from_value(value).with_context(|| format!("invalid {label} shape"))
@@ -377,6 +421,48 @@ fn validate_identifier(value: &str, max_length: usize, label: &str) -> Result<()
     Ok(())
 }
 
+fn validate_exact_object_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    expected: &[&str],
+    label: &str,
+) -> Result<()> {
+    let actual = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    let expected = expected.iter().copied().collect::<BTreeSet<_>>();
+    if actual != expected {
+        bail!("{label} fields do not match ewb-cli-envelope/v1");
+    }
+    Ok(())
+}
+
+fn validate_cli_command(value: &str) -> Result<()> {
+    let valid = !value.is_empty()
+        && value.len() <= 128
+        && value.split('.').all(|component| {
+            let mut bytes = component.bytes();
+            matches!(bytes.next(), Some(first) if first.is_ascii_lowercase())
+                && bytes.all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'_' | b'-')
+                })
+        });
+    if !valid {
+        bail!("invalid EWB CLI command identifier");
+    }
+    Ok(())
+}
+
+fn validate_cli_error_code(value: &str) -> Result<()> {
+    let mut bytes = value.bytes();
+    let valid = value.len() <= 64
+        && matches!(bytes.next(), Some(first) if first.is_ascii_lowercase())
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    if !valid {
+        bail!("invalid EWB CLI error code");
+    }
+    Ok(())
+}
+
 fn validate_platform_component(value: &str, label: &str) -> Result<()> {
     let valid = !value.is_empty()
         && value.len() <= 64
@@ -448,12 +534,71 @@ mod tests {
         include_bytes!("../contracts/examples/runtime-capsule-v1.example.json");
     const HANDOFF_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/ide-handoff-v1.example.json");
+    const CLI_SUCCESS_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/ewb-cli-envelope-v1.success.example.json");
+    const CLI_FAILURE_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/ewb-cli-envelope-v1.failure.example.json");
 
     #[test]
     fn examples_parse_strictly_and_validate_semantics() {
         parse_subject_candidate(SUBJECT_EXAMPLE).expect("valid subject candidate example");
         parse_runtime_capsule(CAPSULE_EXAMPLE).expect("valid runtime capsule example");
         parse_ide_handoff(HANDOFF_EXAMPLE).expect("valid IDE handoff example");
+        parse_cli_envelope(CLI_SUCCESS_EXAMPLE).expect("valid CLI success envelope example");
+        parse_cli_envelope(CLI_FAILURE_EXAMPLE).expect("valid CLI failure envelope example");
+    }
+
+    #[test]
+    fn cli_envelope_is_closed_discriminated_and_strict() {
+        for data in [
+            json!(null),
+            json!(true),
+            json!("native"),
+            json!([]),
+            json!({}),
+        ] {
+            validate_cli_envelope(&json!({
+                "ok": true,
+                "command": "runs.show",
+                "data": data
+            }))
+            .expect("opaque command data remains envelope-valid");
+        }
+
+        let invalid = [
+            json!(null),
+            json!([]),
+            json!({"ok": true, "command": "runs.show"}),
+            json!({"ok": true, "data": {}}),
+            json!({"ok": "true", "command": "runs.show", "data": {}}),
+            json!({"ok": true, "command": "runs.show", "data": {}, "schema_version": "ewb-cli-envelope/v1"}),
+            json!({"ok": true, "command": "runs.show", "data": {}, "error": {"code": "command_failed", "message": "x"}}),
+            json!({"ok": true, "command": "", "data": {}}),
+            json!({"ok": true, "command": "Runs.show", "data": {}}),
+            json!({"ok": true, "command": "runs..show", "data": {}}),
+            json!({"ok": false}),
+            json!({"ok": false, "error": []}),
+            json!({"ok": false, "error": {"message": "x"}}),
+            json!({"ok": false, "error": {"code": "command_failed"}}),
+            json!({"ok": false, "error": {"code": "command_failed", "message": "x", "detail": "extra"}}),
+            json!({"ok": false, "error": {"code": "command-failed", "message": "x"}}),
+            json!({"ok": false, "error": {"code": "Command_failed", "message": "x"}}),
+            json!({"ok": false, "error": {"code": "command_failed", "message": ""}}),
+            json!({"ok": false, "error": {"code": "command_failed", "message": 1}}),
+            json!({"ok": false, "error": {"code": "command_failed", "message": "x"}, "data": {}}),
+        ];
+        for value in invalid {
+            assert!(
+                validate_cli_envelope(&value).is_err(),
+                "accepted invalid CLI envelope: {value}"
+            );
+        }
+
+        assert!(
+            parse_cli_envelope(br#"{"ok":true,"command":"runs.show","data":{},"ok":false}"#)
+                .is_err()
+        );
+        assert!(parse_cli_envelope(br#"{"ok":true,"command":"runs.show","data":{}} {}"#).is_err());
     }
 
     #[test]
@@ -544,6 +689,7 @@ mod tests {
             include_str!("../contracts/native-delivery-qualification-v1.schema.json"),
             include_str!("../contracts/ide-handoff-v1.schema.json"),
             include_str!("../contracts/build-identity-v1.schema.json"),
+            include_str!("../contracts/ewb-cli-envelope-v1.schema.json"),
         ] {
             let schema: Value = serde_json::from_str(raw).expect("valid JSON Schema JSON");
             assert_objects_are_closed(&schema);

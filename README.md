@@ -91,6 +91,23 @@ ewb --json tools list
 
 `doctor` is read-only and does not launch native version commands. `tools probe` is also rejected for every `fail_closed` adapter; it may launch a version probe only after a future production adapter has an admitted complete runtime closure. Trusted manifests are compiled into the `ewb` binary; files placed under `.ewb/manifests` cannot grant a new executable, capability, result, or authority claim.
 
+The durable registries have symmetric read-only inspection surfaces:
+
+```powershell
+ewb --json --workspace C:\evidence-workspace plans list
+ewb --json --workspace C:\evidence-workspace plans show <PLAN_ID>
+ewb --json --workspace C:\evidence-workspace artifacts list
+ewb --json --workspace C:\evidence-workspace artifacts show <ARTIFACT_ID>
+ewb --json --workspace C:\evidence-workspace qualifications list
+```
+
+Each command returns the complete stored record only after re-verifying its
+record digest and all locally bound bytes. A list is atomic: one malformed,
+linked, unexpected, or stale registry entry fails the whole command rather than
+returning partial data. A digest read back through `plans show` is inspection
+data; it must never replace the reviewed digest retained when `runs plan`
+created the plan.
+
 ### Runtime capsule registry
 
 An explicit local capsule can be imported only from a closed root whose files
@@ -282,7 +299,14 @@ The machine envelope is:
 {"ok":true,"command":"runs.show","data":{}}
 ```
 
-Errors are also one JSON value and never include native output or credentials.
+Its logical contract is `ewb-cli-envelope/v1`. The version is selected out of
+band through the contract name; v1 deliberately adds no top-level
+`schema_version` field to the established CLI JSON. A success object has exactly
+`ok`, `command`, and `data`. A failure object has exactly `ok` and `error`, where
+`error` has exactly `code` and `message`. `data` remains the opaque native
+payload of the named EWB command and is validated by that command's own
+contract. Errors are also one JSON value and never include native output or
+credentials.
 
 ## Contracts
 
@@ -293,6 +317,7 @@ Errors are also one JSON value and never include native output or credentials.
 - [`contracts/upstream-pin-v1.schema.json`](contracts/upstream-pin-v1.schema.json)
 - [`contracts/native-delivery-qualification-v1.schema.json`](contracts/native-delivery-qualification-v1.schema.json)
 - [`contracts/build-identity-v1.schema.json`](contracts/build-identity-v1.schema.json)
+- [`contracts/ewb-cli-envelope-v1.schema.json`](contracts/ewb-cli-envelope-v1.schema.json)
 
 The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or aggregate result field. A native projection carries its own namespace, value, `projection_only: true`, artifact ID, and exact locator. In `instrument_run/v1`, `native_authority` is schema-constrained to `not_reported`, and artifact `source_run_id` is constrained to `null` rather than asserting unverified lineage; either feature requires a new contract version with native rebinding rather than widening v1 in place.
 
@@ -304,7 +329,10 @@ The run schema has no shared `status`, `verdict`, `passed`, `overall_status`, or
 - Child environment variables are minimized. This reduces accidental credential inheritance but does not remove the process's filesystem authority.
 - On Windows, timeout kills the direct child and then closes a Job Object with `KILL_ON_JOB_CLOSE`. The child is assigned after spawn, so a grandchild can race that assignment. Unix still kills only the direct child. This is not OS network containment.
 - Native output capture is bounded at 32 MiB. Exceeding it records an interrupted run with no native result.
-- Storage directories and artifact files reject symlinks/reparse points at validation time. Full handle-relative, race-free containment against a same-user adversary is not yet claimed.
+- Storage directories reject symlinks and reparse points. Registry records,
+  CAS objects, and staged private files must also have exactly one hard-link
+  name when read or verified. Full handle-relative, race-free containment
+  against a same-user adversary is not yet claimed.
 - Clean Git commit identity is required. Dirty and untracked working trees fail closed.
 - Python-backed planning is disabled until the launcher, interpreter, runtime, distribution, and transitive dependencies can all be snapshotted immutably.
 - Each production manifest has one embedded `upstream_pin/v1`. Its source/delivery/posture fields are registry evidence; only its separate `execution_readiness` field controls whether an exact operation has an admitted closure.

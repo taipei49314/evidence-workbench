@@ -121,6 +121,14 @@ pub fn load_verified(
     Ok(record)
 }
 
+pub fn list_verified(workspace: &Workspace) -> Result<Vec<NativeDeliveryQualificationRecord>> {
+    let records = workspace.list_native_qualifications()?;
+    for record in &records {
+        verify_record(workspace, record)?;
+    }
+    Ok(records)
+}
+
 pub fn verify(workspace: &Workspace, qualification_id: &str) -> Result<QualificationVerification> {
     let record = load_verified(workspace, qualification_id)?;
     let executable = executable_artifact(&record)?;

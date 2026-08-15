@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "command_failed",
+    "message": "unknown trusted tool manifest: missing"
+  }
+}

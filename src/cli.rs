@@ -50,6 +50,8 @@ pub enum Command {
     Qualifications(QualificationsCommand),
     /// Import and inspect untrusted exact-byte GitHub discovery candidates.
     Candidates(CandidatesCommand),
+    /// Inspect stored execution plans without launching native tools.
+    Plans(PlansCommand),
     /// Plan, execute, and inspect authority-preserving runs.
     Runs(RunsCommand),
     /// Import and verify exact-byte artifacts.
@@ -159,6 +161,8 @@ pub enum QualificationsSubcommand {
         #[arg(long, value_name = "DIRECTORY")]
         root: PathBuf,
     },
+    /// List and re-verify every qualification in this workspace.
+    List,
     /// Show and re-verify one complete qualification record.
     Show { qualification_id: String },
     /// Re-hash every durable CAS reference and all semantic bindings.
@@ -178,6 +182,20 @@ pub enum CandidatesSubcommand {
     Show { candidate_id: String },
     /// Re-hash the candidate bytes, source artifact, and registry record.
     Verify { candidate_id: String },
+}
+
+#[derive(Debug, Args)]
+pub struct PlansCommand {
+    #[command(subcommand)]
+    pub command: PlansSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PlansSubcommand {
+    /// List stored plans after re-verifying every record and bound local byte.
+    List,
+    /// Show and re-verify one plan. Use only its originally retained digest for execution.
+    Show { plan_id: String },
 }
 
 #[derive(Debug, Args)]
@@ -247,6 +265,10 @@ pub enum ArtifactsSubcommand {
         #[arg(long, default_value = "application/octet-stream")]
         media_type: String,
     },
+    /// List and re-verify every artifact record and stored object.
+    List,
+    /// Show one complete artifact record after re-hashing its stored bytes.
+    Show { artifact_id: String },
     /// Recompute an artifact's length and SHA-256 from stored bytes.
     Verify { artifact_id: String },
 }
@@ -268,6 +290,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
         Command::Capsules(command) => capsules(cli, command),
         Command::Qualifications(command) => qualifications(cli, command),
         Command::Candidates(command) => candidates(cli, command),
+        Command::Plans(command) => plans(cli, command),
         Command::Runs(command) => runs(cli, command),
         Command::Artifacts(command) => artifacts(cli, command),
     }
@@ -508,6 +531,10 @@ fn qualifications(cli: &Cli, command: &QualificationsCommand) -> Result<CommandO
             "qualifications.admit",
             native_qualifications::admit(&workspace, descriptor, root)?,
         ),
+        QualificationsSubcommand::List => success(
+            "qualifications.list",
+            native_qualifications::list_verified(&workspace)?,
+        ),
         QualificationsSubcommand::Show { qualification_id } => success(
             "qualifications.show",
             native_qualifications::load_verified(&workspace, qualification_id)?,
@@ -537,6 +564,20 @@ fn candidates(cli: &Cli, command: &CandidatesCommand) -> Result<CommandOutcome> 
         CandidatesSubcommand::Verify { candidate_id } => success(
             "candidates.verify",
             serde_json::to_value(subject_candidates::verify(&workspace, candidate_id)?)?,
+        ),
+    }
+}
+
+fn plans(cli: &Cli, command: &PlansCommand) -> Result<CommandOutcome> {
+    let workspace = open_workspace(cli)?;
+    match &command.command {
+        PlansSubcommand::List => success(
+            "plans.list",
+            serde_json::to_value(workspace.list_plans_verified()?)?,
+        ),
+        PlansSubcommand::Show { plan_id } => success(
+            "plans.show",
+            serde_json::to_value(workspace.load_plan_verified(plan_id)?)?,
         ),
     }
 }
@@ -748,6 +789,14 @@ fn artifacts(cli: &Cli, command: &ArtifactsCommand) -> Result<CommandOutcome> {
             )?;
             success("artifacts.add", serde_json::to_value(descriptor)?)
         }
+        ArtifactsSubcommand::List => success(
+            "artifacts.list",
+            serde_json::to_value(workspace.list_artifacts()?)?,
+        ),
+        ArtifactsSubcommand::Show { artifact_id } => success(
+            "artifacts.show",
+            serde_json::to_value(workspace.load_artifact(artifact_id)?)?,
+        ),
         ArtifactsSubcommand::Verify { artifact_id } => {
             let record = workspace.load_artifact(artifact_id)?;
             success(
