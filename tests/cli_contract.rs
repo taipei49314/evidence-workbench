@@ -656,7 +656,10 @@ fn capsules_snapshot_writes_fail_closed_descriptor_without_workspace() {
 
     let parsed: RuntimeCapsule =
         serde_json::from_slice(&fs::read(&out).unwrap()).expect("snapshot descriptor parses");
-    assert_eq!(parsed.readiness.state, evidence_workbench::contracts::CapsuleReadinessState::FailClosed);
+    assert_eq!(
+        parsed.readiness.state,
+        evidence_workbench::contracts::CapsuleReadinessState::FailClosed
+    );
 }
 
 #[test]
