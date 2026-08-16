@@ -324,6 +324,7 @@ pub fn admit(
     Ok(record)
 }
 
+#[cfg(windows)]
 const PROVE_ARCHIVE_ALLOWLIST: &[&str] = &[
     "python.exe",
     "python313.dll",
@@ -334,12 +335,14 @@ const PROVE_ARCHIVE_ALLOWLIST: &[&str] = &[
     "select.pyd",
 ];
 
+#[cfg(windows)]
 struct ProveRoot {
     _cleanup: TmpRoot,
     launcher: PathBuf,
     scratch: PathBuf,
 }
 
+#[cfg(windows)]
 fn materialize_prove_root(
     workspace: &Workspace,
     inventory: &PythonRuntimeQualification,
@@ -400,6 +403,7 @@ fn materialize_prove_root(
     })
 }
 
+#[cfg(windows)]
 fn write_prove_archive_member(root: &Path, name: &str, member: &[u8]) -> Result<()> {
     if Path::new(name)
         .extension()
@@ -415,6 +419,7 @@ fn write_prove_archive_member(root: &Path, name: &str, member: &[u8]) -> Result<
     write_create_new_bytes(&root.join(name), member)
 }
 
+#[cfg(windows)]
 fn write_create_new_bytes(destination: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -554,12 +559,12 @@ fn prove_network_windows(
     }
     let root = materialize_prove_root(workspace, &inventory.payload, "network")?;
     let admission_id = format!("admission_{}", Uuid::new_v4().simple());
-    let profile_name = format!("ewb.prove.{}", admission_id.trim_start_matches("admission_"));
-    let proof = python_network::prove_bound_python_network(
-        &root.launcher,
-        &root.scratch,
-        &profile_name,
-    )?;
+    let profile_name = format!(
+        "ewb.prove.{}",
+        admission_id.trim_start_matches("admission_")
+    );
+    let proof =
+        python_network::prove_bound_python_network(&root.launcher, &root.scratch, &profile_name)?;
 
     let mut checks = source.payload.checks.clone();
     for check in &mut checks {
@@ -618,6 +623,8 @@ fn prove_network_windows(
 }
 
 type CheckOutcome = (PythonAdmissionCheckState, Vec<ArtifactRecordRef>);
+type LoadedArtifact = (crate::contracts::ArtifactRecord, Vec<u8>);
+type WheelRecordPair = (LoadedArtifact, LoadedArtifact);
 
 fn evaluate_implementable_proofs(
     workspace: &Workspace,
@@ -870,12 +877,7 @@ fn prove_launch_harness(
     Ok(())
 }
 
-fn prove_wheel_record_closure(
-    pairs: &[(
-        (crate::contracts::ArtifactRecord, Vec<u8>),
-        (crate::contracts::ArtifactRecord, Vec<u8>),
-    )],
-) -> Result<()> {
+fn prove_wheel_record_closure(pairs: &[WheelRecordPair]) -> Result<()> {
     if pairs.is_empty() {
         bail!("wheel RECORD closure requires at least one wheel pair");
     }
@@ -946,10 +948,7 @@ fn prove_private_materialization(
     archive: &crate::contracts::ArtifactRecord,
     path_config: &crate::contracts::ArtifactRecord,
     wrapper: &crate::contracts::ArtifactRecord,
-    wheel_pairs: &[(
-        (crate::contracts::ArtifactRecord, Vec<u8>),
-        (crate::contracts::ArtifactRecord, Vec<u8>),
-    )],
+    wheel_pairs: &[WheelRecordPair],
 ) -> Result<()> {
     let launcher = workspace.load_artifact(launcher_artifact_id)?;
     let mut expected = vec![
@@ -1321,15 +1320,9 @@ fn verify_record(
     record: &PythonRuntimeExecutionAdmissionRecord,
 ) -> Result<()> {
     let expected_record_schema = match record.payload.schema_version.as_str() {
-        "python_runtime_execution_admission/v1" => {
-            "python_runtime_execution_admission_record/v1"
-        }
-        "python_runtime_execution_admission/v2" => {
-            "python_runtime_execution_admission_record/v2"
-        }
-        "python_runtime_execution_admission/v3" => {
-            "python_runtime_execution_admission_record/v3"
-        }
+        "python_runtime_execution_admission/v1" => "python_runtime_execution_admission_record/v1",
+        "python_runtime_execution_admission/v2" => "python_runtime_execution_admission_record/v2",
+        "python_runtime_execution_admission/v3" => "python_runtime_execution_admission_record/v3",
         _ => bail!("unsupported Python runtime execution admission schema"),
     };
     if record.schema_version != expected_record_schema {
@@ -1364,9 +1357,7 @@ fn verify_record(
             bail!("Python prove source admission digest mismatch");
         }
         if cited.payload.schema_version != expected_source_schema {
-            bail!(
-                "Python prove source admission must be {expected_source_schema}"
-            );
+            bail!("Python prove source admission must be {expected_source_schema}");
         }
         if cited.payload.inventory_qualification_ref != record.payload.inventory_qualification_ref
             || cited.payload.tool_ref != record.payload.tool_ref
@@ -1455,12 +1446,14 @@ mod tests {
 
     #[test]
     fn v2_allows_job_and_process_limit_satisfied_but_not_granted() {
-        let payload =
-            parse_python_runtime_execution_admission(include_bytes!(
-                "../contracts/examples/python-runtime-execution-admission-v2.example.json"
-            ))
-            .unwrap();
-        assert_eq!(payload.schema_version, "python_runtime_execution_admission/v2");
+        let payload = parse_python_runtime_execution_admission(include_bytes!(
+            "../contracts/examples/python-runtime-execution-admission-v2.example.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            payload.schema_version,
+            "python_runtime_execution_admission/v2"
+        );
         assert_eq!(
             payload.admission_state.state,
             PythonAdmissionStateValue::NotGranted
@@ -1492,7 +1485,10 @@ mod tests {
             "../contracts/examples/python-runtime-execution-admission-v3.example.json"
         ))
         .unwrap();
-        assert_eq!(payload.schema_version, "python_runtime_execution_admission/v3");
+        assert_eq!(
+            payload.schema_version,
+            "python_runtime_execution_admission/v3"
+        );
         assert_eq!(
             payload.admission_state.state,
             PythonAdmissionStateValue::NotGranted
@@ -2110,13 +2106,19 @@ mod tests {
         let (_temporary, workspace, admission) = closed_embed_admission();
         let inventory = python_qualifications::load_verified(
             &workspace,
-            &admission.payload.inventory_qualification_ref.qualification_id,
+            &admission
+                .payload
+                .inventory_qualification_ref
+                .qualification_id,
         )
         .unwrap();
         let root = materialize_prove_root(&workspace, &inventory.payload, "test").unwrap();
         let home = root.launcher.parent().unwrap();
         assert_eq!(fs::read(&root.launcher).unwrap(), b"embed-launcher");
-        assert_eq!(fs::read(home.join("python313.zip")).unwrap(), b"stdlib-bytes");
+        assert_eq!(
+            fs::read(home.join("python313.zip")).unwrap(),
+            b"stdlib-bytes"
+        );
         assert_eq!(
             fs::read(home.join("python313._pth")).unwrap(),
             b"python313.zip\nsite\n"
@@ -2150,7 +2152,12 @@ mod tests {
             PythonAdmissionStateValue::NotGranted
         );
         assert_eq!(
-            proved.payload.source_admission_ref.as_ref().unwrap().admission_id,
+            proved
+                .payload
+                .source_admission_ref
+                .as_ref()
+                .unwrap()
+                .admission_id,
             admission.admission_id
         );
         let check = |code: &str| {
@@ -2244,7 +2251,12 @@ mod tests {
             PythonAdmissionStateValue::NotGranted
         );
         assert_eq!(
-            proved.payload.source_admission_ref.as_ref().unwrap().admission_id,
+            proved
+                .payload
+                .source_admission_ref
+                .as_ref()
+                .unwrap()
+                .admission_id,
             contained.admission_id
         );
         let check = |code: &str| {
@@ -2301,12 +2313,14 @@ mod tests {
             proved.payload.admission_state.state,
             PythonAdmissionStateValue::NotGranted
         );
-        assert!(proved
-            .payload
-            .admission_state
-            .blocker_codes
-            .iter()
-            .any(|code| code == "os_network_egress_denial"));
+        assert!(
+            proved
+                .payload
+                .admission_state
+                .blocker_codes
+                .iter()
+                .any(|code| code == "os_network_egress_denial")
+        );
         assert!(crate::upstream_pins::require_ready_for_planning("phaseledger").is_err());
     }
 

@@ -71,7 +71,11 @@ pub fn parse_python_runtime_execution_admission_record(
     {
         bail!("unsupported Python runtime execution admission record schema");
     }
-    validate_prefixed_id(&record.admission_id, "admission_", "Python execution admission id")?;
+    validate_prefixed_id(
+        &record.admission_id,
+        "admission_",
+        "Python execution admission id",
+    )?;
     validate_sha256(&record.record_digest, "Python execution admission record")?;
     crate::python_admissions::validate_payload(&record.payload)?;
     let actual = hex::encode(Sha256::digest(serde_json::to_vec(&record.payload)?));
@@ -823,21 +827,18 @@ mod tests {
         include_bytes!("../contracts/examples/python-runtime-qualification-v1.example.json");
     const PYTHON_QUALIFICATION_RECORD_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/python-runtime-qualification-record-v1.example.json");
-    const PYTHON_ADMISSION_EXAMPLE: &[u8] = include_bytes!(
-        "../contracts/examples/python-runtime-execution-admission-v1.example.json"
-    );
+    const PYTHON_ADMISSION_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/python-runtime-execution-admission-v1.example.json");
     const PYTHON_ADMISSION_RECORD_EXAMPLE: &[u8] = include_bytes!(
         "../contracts/examples/python-runtime-execution-admission-record-v1.example.json"
     );
-    const PYTHON_ADMISSION_V2_EXAMPLE: &[u8] = include_bytes!(
-        "../contracts/examples/python-runtime-execution-admission-v2.example.json"
-    );
+    const PYTHON_ADMISSION_V2_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/python-runtime-execution-admission-v2.example.json");
     const PYTHON_ADMISSION_RECORD_V2_EXAMPLE: &[u8] = include_bytes!(
         "../contracts/examples/python-runtime-execution-admission-record-v2.example.json"
     );
-    const PYTHON_ADMISSION_V3_EXAMPLE: &[u8] = include_bytes!(
-        "../contracts/examples/python-runtime-execution-admission-v3.example.json"
-    );
+    const PYTHON_ADMISSION_V3_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/python-runtime-execution-admission-v3.example.json");
     const PYTHON_ADMISSION_RECORD_V3_EXAMPLE: &[u8] = include_bytes!(
         "../contracts/examples/python-runtime-execution-admission-record-v3.example.json"
     );
@@ -1600,9 +1601,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("python_admission_ref");
-        assert!(
-            serde_json::from_value::<crate::contracts::InstrumentRun>(missing_python).is_err()
-        );
+        assert!(serde_json::from_value::<crate::contracts::InstrumentRun>(missing_python).is_err());
     }
 
     fn assert_objects_are_closed(value: &Value) {

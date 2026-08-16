@@ -30,10 +30,7 @@ pub fn prove_bound_python(launcher: &Path, scratch: &Path) -> Result<ResidualCon
 }
 
 #[cfg(windows)]
-fn prove_bound_python_windows(
-    launcher: &Path,
-    scratch: &Path,
-) -> Result<ResidualContainmentProof> {
+fn prove_bound_python_windows(launcher: &Path, scratch: &Path) -> Result<ResidualContainmentProof> {
     use windows_sys::Win32::System::JobObjects::{
         CreateJobObjectW, IsProcessInJob, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -103,21 +100,16 @@ fn prove_bound_python_windows(
             bail!("cannot attach PROC_THREAD_ATTRIBUTE_JOB_LIST to the prove process");
         }
 
-        let occupant = match spawn_suspended_in_job(
-            launcher,
-            scratch,
-            &empty_path,
-            &temp,
-            &attributes,
-        ) {
-            Ok(process) => process,
-            Err(_) => {
-                return Ok(ResidualContainmentProof {
-                    job_assignment: PythonAdmissionCheckState::Failed,
-                    process_limit: PythonAdmissionCheckState::Failed,
-                });
-            }
-        };
+        let occupant =
+            match spawn_suspended_in_job(launcher, scratch, &empty_path, &temp, &attributes) {
+                Ok(process) => process,
+                Err(_) => {
+                    return Ok(ResidualContainmentProof {
+                        job_assignment: PythonAdmissionCheckState::Failed,
+                        process_limit: PythonAdmissionCheckState::Failed,
+                    });
+                }
+            };
         let mut in_job = 0i32;
         let assigned = IsProcessInJob(occupant.process, job, &mut in_job) != 0 && in_job != 0;
         let job_assignment = if assigned {
@@ -199,8 +191,8 @@ fn spawn_suspended_in_job(
 ) -> Result<SpawnedProcess> {
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::System::Threading::{
-        CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
-        EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION, STARTUPINFOEXW,
+        CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, EXTENDED_STARTUPINFO_PRESENT,
+        PROCESS_INFORMATION, STARTUPINFOEXW,
     };
 
     let mut application = wide_z(launcher);
@@ -311,11 +303,10 @@ fn windows_directory() -> Result<std::path::PathBuf> {
 #[cfg(windows)]
 use std::fs;
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
-    #[cfg(windows)]
     #[test]
     fn creation_time_job_and_process_limit_use_real_pe() {
         let launcher = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
@@ -331,7 +322,6 @@ mod tests {
         );
     }
 
-    #[cfg(windows)]
     #[test]
     fn non_pe_launcher_fails_closed() {
         let scratch = tempfile::tempdir().unwrap();

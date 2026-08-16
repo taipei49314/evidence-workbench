@@ -11,10 +11,7 @@ const FORBIDDEN_CHECK_NAMES: &[&str] = &[
     "all_metrics_passed",
 ];
 
-const REQUIRED_CLAIM_TOKENS: &[&str] = &[
-    "untrusted_exact_bytes",
-    "authority_effect none",
-];
+const REQUIRED_CLAIM_TOKENS: &[&str] = &["untrusted_exact_bytes", "authority_effect none"];
 
 pub fn validate(observation: &PhaseledgerCallerObservation) -> Result<()> {
     if observation.schema_version != "phaseledger-caller-observation/v1" {
@@ -33,15 +30,23 @@ pub fn validate(observation: &PhaseledgerCallerObservation) -> Result<()> {
     }
     workspace::validate_sha256(&observation.cited_artifact.digest.value)?;
     if observation.artifact_sha256 != observation.cited_artifact.digest.value {
-        bail!("Phaseledger caller observation artifact_sha256 must equal the cited artifact digest");
+        bail!(
+            "Phaseledger caller observation artifact_sha256 must equal the cited artifact digest"
+        );
     }
     if observation.cited_artifact.byte_length == 0 {
         bail!("Phaseledger caller observation cited artifact must contain bytes");
     }
-    if !observation.claim.contains(&observation.cited_artifact.artifact_id) {
+    if !observation
+        .claim
+        .contains(&observation.cited_artifact.artifact_id)
+    {
         bail!("Phaseledger caller observation claim must name the cited artifact id");
     }
-    if !observation.claim.contains(&observation.cited_artifact.digest.value) {
+    if !observation
+        .claim
+        .contains(&observation.cited_artifact.digest.value)
+    {
         bail!("Phaseledger caller observation claim must name the cited artifact digest");
     }
     for token in REQUIRED_CLAIM_TOKENS {

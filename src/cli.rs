@@ -4,8 +4,7 @@ use crate::contracts::{
 use crate::{
     build_identity, candidate_pins, evidence_handoffs, git_subject, manifests, native,
     native_qualifications, python_admissions, python_qualifications, runtime_capsules,
-    subject_candidates,
-    upstream_pins, workspace,
+    subject_candidates, upstream_pins, workspace,
 };
 use anyhow::{Context, Result, bail};
 use chrono::{SecondsFormat, Utc};
@@ -802,9 +801,9 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
                 &manifest.manifest.manifest_id,
                 &manifest.manifest.invocation_contract.operation,
             )?;
-            if python_admissions::ALLOWED_OPERATIONS.contains(
-                &manifest.manifest.invocation_contract.operation.as_str(),
-            ) && python_admission_ref.is_none()
+            if python_admissions::ALLOWED_OPERATIONS
+                .contains(&manifest.manifest.invocation_contract.operation.as_str())
+                && python_admission_ref.is_none()
             {
                 runtime_capsules::planning_blocker(
                     &workspace,
