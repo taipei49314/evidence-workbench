@@ -1,0 +1,23 @@
+{
+  "schema_version": "phaseledger-caller-observation/v1",
+  "phase": "measure",
+  "claim": "cite artifact_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa digest 6666666666666666666666666666666666666666666666666666666666666666 as untrusted_exact_bytes with authority_effect none",
+  "artifact_present": true,
+  "artifact_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "cited_artifact": {
+    "artifact_id": "artifact_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "digest": {
+      "algorithm": "sha256",
+      "value": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "byte_length": 32
+  },
+  "checks": [
+    { "name": "caller_cited_exact_stdout_artifact", "passed": true }
+  ],
+  "unsupported": {
+    "freshness": "unsupported",
+    "producer_run_scope": "unsupported"
+  },
+  "authority_effect": "none"
+}

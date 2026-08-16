@@ -109,15 +109,75 @@ contract selects an artifact by role or infers a handoff from a run.
 Every object shape is closed with `additionalProperties: false`. Rust parsing
 also rejects duplicate JSON keys and applies semantic cross-field validation.
 
-The Python qualification registry is `.ewb/python-qualifications`. Upgrading
+`python_runtime_execution_admission/v1` is a sibling of the incomplete
+inventory qualification. It cites one `python_runtime_qualification_record/v1`
+by ID and caller-retained digest, binds one allowlisted operation
+(`trust_meter_measure` or `phaseledger_measure`), and records the same eight
+check codes. Implementable checks may be `satisfied`, `not_implemented`, or
+`failed`. Residual containment checks
+(`os_network_egress_denial`, `python_active_process_limit_one`,
+`python_creation_time_job_assignment`) cannot be `satisfied`. The only
+admission state is `not_granted`, and `authority_effect` is `none`. Inventory
+presence does not grant admission. `python_runtime_execution_admission_record/v1`
+wraps that payload under an opaque `admission_<32hex>` locator; its
+`record_digest` is SHA-256 over compact typed payload JSON.
+
+`phaseledger-caller-observation/v1` is a caller-authored cite contract for a
+future Phaseledger 0.6.0 observation file. It requires a present exact artifact
+ID, matching SHA-256, a claim that names that ID/digest plus
+`untrusted_exact_bytes` and `authority_effect none`, and caller-authored
+checks whose names cannot be Trust Meter fields (`passed`, `overall_score`,
+`advisory_gate_met`, `threshold_met`, `all_metrics_passed`). Freshness and
+producer-run scope are explicitly `unsupported`. EWB does not write this
+object and does not map Trust Meter projections into it. Mapping to native
+Phaseledger `measure` JSON is a caller responsibility.
+
+Trust Meter → Phaseledger vertical-slice completion requires all of the
+following on a fresh workspace. None of these is implied by a schema existing
+or a registry record being present:
+
+1. Every plan, run, and handoff retains the `record_digest` returned at create
+   time. Later `show` output cannot replace that caller-retained digest.
+2. Downstream inputs are exact artifact ID, descriptor digest, and CAS bytes.
+   Role, tool name, and registry presence do not identify a producer.
+3. `handoffs create` still requires the artifact to appear exactly once in the
+   producer run's recorded artifacts.
+4. Digest mismatch, CAS tamper, missing predecessor records, spawn failure,
+   timeout, and unknown native exits fail closed.
+5. EWB has no path that writes Trust Meter `passed`, `overall_score`, or
+   `advisory_gate_met` into a Phaseledger observation.
+6. Phaseledger `VERDICT:` and exit remain native envelope fields. EWB `ok`
+   reports command completion only.
+7. After restart, `handoffs verify`, `artifacts verify`, and `runs show` agree
+   on the same IDs and caller-retained digests.
+8. Non-TomorrowCI tools stay `fail_closed` and `enabled_by_default: false`
+   until an operation-scoped admission is granted and the exact pin blockers
+   are actually closed. Residual containment blockers remain named; they are
+   not an OS sandbox.
+
+`ewb runs plan --input-artifact` remains a separate surface from
+`ewb handoffs`. A handoff ID is not an artifact ID. Planning does not scan
+`.ewb/handoffs`.
+
+The Trust Meter machine adapter is `--json-v1 --no-config` only. That closed
+interface selects Trust Meter's fixed `builtin-static-v1` collectors. Ambient
+ancestor `.trust-meter.toml` is not a measurement input. Exact `--config` file
+binding remains reserved. Selectors are `/result/advisory_gate_met`,
+`/result/threshold_met`, and `/result/overall_score`; `/passed` is not a
+selector. Pin `execution_readiness` stays `fail_closed` in this slice.
+
+The Python qualification registry is `.ewb/python-qualifications`. The Python
+execution-admission registry is `.ewb/python-admissions`. Upgrading
 an existing workspace requires rerunning idempotent `ewb init` once; reads fail
 closed if the directory is absent, linked, contains an unexpected entry, or if
 any listed record/reference/CAS object fails re-verification. `create`, `list`,
 `show`, and `verify` never spawn a process and never write a plan, run, or
 execution directory. `create` writes only the exact embedded wrapper artifact
-and its own atomic unique registry record after caller-input preflight. No plan
-or run schema, `NativeQualificationRef`, native adapter, manifest enablement, or
-upstream-pin readiness is changed by this contract.
+and its own atomic unique registry record after caller-input preflight. That
+inventory command still does not change readiness. `python-admissions admit`
+writes a sibling not-granted record and may bind `python_admission_ref` on a
+plan/run; it does not set `enabled_by_default` or pin `ready`. `NativeQualificationRef`
+remains TomorrowCI-only.
 
 Runtime-capsule descriptor readiness is not EWB execution admission. Capsule
 verification reports the descriptor values only as `descriptor_claimed_*` and

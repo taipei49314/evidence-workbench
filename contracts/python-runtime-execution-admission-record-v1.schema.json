@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench local Python runtime execution admission record v1",
+  "description": "Wraps one python_runtime_execution_admission/v1 payload. record_digest is SHA-256 over compact typed payload JSON. The opaque admission_id does not represent trust, readiness, or authority. An incomplete python_runtime_qualification/v1 record cannot be substituted for this payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "admission_id", "record_digest", "payload"],
+  "properties": {
+    "schema_version": { "const": "python_runtime_execution_admission_record/v1" },
+    "admission_id": { "type": "string", "pattern": "^admission_[0-9a-f]{32}$" },
+    "record_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "payload": { "$ref": "python-runtime-execution-admission-v1.schema.json" }
+  }
+}

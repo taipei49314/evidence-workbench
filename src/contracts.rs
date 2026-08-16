@@ -257,6 +257,8 @@ pub struct InstrumentRun {
     pub upstream_pin_ref: UpstreamPinRef,
     #[serde(deserialize_with = "deserialize_explicit_option")]
     pub native_qualification_ref: Option<NativeQualificationRef>,
+    #[serde(deserialize_with = "deserialize_explicit_option")]
+    pub python_admission_ref: Option<PythonAdmissionRef>,
     pub resolved_tool_identity: BinaryIdentity,
     pub recorder_identity: RecorderIdentity,
     pub adapter: AdapterIdentity,
@@ -287,6 +289,8 @@ pub struct PlanPayload {
     pub upstream_pin_ref: UpstreamPinRef,
     #[serde(deserialize_with = "deserialize_explicit_option")]
     pub native_qualification_ref: Option<NativeQualificationRef>,
+    #[serde(deserialize_with = "deserialize_explicit_option")]
+    pub python_admission_ref: Option<PythonAdmissionRef>,
     pub resolved_tool_identity: BinaryIdentity,
     pub recorder_identity: RecorderIdentity,
     pub adapter: AdapterIdentity,
@@ -791,6 +795,103 @@ pub struct PythonQualificationState {
 #[serde(rename_all = "snake_case")]
 pub enum PythonQualificationStateValue {
     Incomplete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonAdmissionRef {
+    pub admission_id: String,
+    pub record_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonRuntimeExecutionAdmission {
+    pub schema_version: String,
+    pub observed_at: String,
+    pub inventory_qualification_ref: NativeQualificationRef,
+    pub tool_ref: ToolRef,
+    pub upstream_pin_ref: UpstreamPinRef,
+    pub operation: String,
+    pub recorder_identity: RecorderIdentity,
+    pub platform_observation: PythonPlatformObservation,
+    pub checks: Vec<PythonAdmissionCheck>,
+    pub admission_state: PythonAdmissionState,
+    pub authority_effect: ContractAuthorityEffect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonRuntimeExecutionAdmissionRecord {
+    pub schema_version: String,
+    pub admission_id: String,
+    pub record_digest: String,
+    pub payload: PythonRuntimeExecutionAdmission,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonAdmissionCheck {
+    pub code: String,
+    pub state: PythonAdmissionCheckState,
+    pub evidence_refs: Vec<ArtifactRecordRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PythonAdmissionCheckState {
+    Satisfied,
+    NotImplemented,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonAdmissionState {
+    pub state: PythonAdmissionStateValue,
+    pub blocker_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PythonAdmissionStateValue {
+    NotGranted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PhaseledgerCallerObservation {
+    pub schema_version: String,
+    pub phase: String,
+    pub claim: String,
+    pub artifact_present: bool,
+    pub artifact_sha256: String,
+    pub cited_artifact: PhaseledgerCitedArtifact,
+    pub checks: Vec<PhaseledgerCallerCheck>,
+    pub unsupported: PhaseledgerUnsupportedFields,
+    pub authority_effect: ContractAuthorityEffect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PhaseledgerCitedArtifact {
+    pub artifact_id: String,
+    pub digest: Digest,
+    pub byte_length: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PhaseledgerCallerCheck {
+    pub name: String,
+    pub passed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PhaseledgerUnsupportedFields {
+    pub freshness: String,
+    pub producer_run_scope: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

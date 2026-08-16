@@ -4,7 +4,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "run_id", "source_plan_ref", "tool_ref", "upstream_pin_ref", "native_qualification_ref", "resolved_tool_identity", "recorder_identity",
+    "schema_version", "run_id", "source_plan_ref", "tool_ref", "upstream_pin_ref", "native_qualification_ref", "python_admission_ref", "resolved_tool_identity", "recorder_identity",
     "adapter", "subject", "parameters", "invocation", "started_at", "finished_at", "termination", "artifacts",
     "native_result", "native_authority", "limitations"
   ],
@@ -16,6 +16,9 @@
     "upstream_pin_ref": { "$ref": "#/$defs/upstream_pin_ref" },
     "native_qualification_ref": {
       "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/native_qualification_ref" }]
+    },
+    "python_admission_ref": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/python_admission_ref" }]
     },
     "resolved_tool_identity": { "$ref": "#/$defs/binary_identity" },
     "recorder_identity": { "$ref": "#/$defs/recorder_identity" },
@@ -64,6 +67,14 @@
       "required": ["qualification_id", "record_digest"],
       "properties": {
         "qualification_id": { "type": "string", "pattern": "^qualification_[0-9a-f]{32}$" },
+        "record_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "python_admission_ref": {
+      "type": "object", "additionalProperties": false,
+      "required": ["admission_id", "record_digest"],
+      "properties": {
+        "admission_id": { "type": "string", "pattern": "^admission_[0-9a-f]{32}$" },
         "record_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },

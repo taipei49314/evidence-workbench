@@ -108,6 +108,7 @@ fn valid_run(temp: &TempDir) -> (Workspace, InstrumentRun) {
         },
         upstream_pin_ref: crate::upstream_pins::fixture_ref(),
         native_qualification_ref: None,
+        python_admission_ref: None,
         resolved_tool_identity: BinaryIdentity {
             path: staged.display().to_string(),
             sha256: native_snapshot.digest.value.clone(),
@@ -203,6 +204,7 @@ fn valid_run(temp: &TempDir) -> (Workspace, InstrumentRun) {
         tool_ref: run.tool_ref.clone(),
         upstream_pin_ref: run.upstream_pin_ref.clone(),
         native_qualification_ref: run.native_qualification_ref.clone(),
+        python_admission_ref: run.python_admission_ref.clone(),
         resolved_tool_identity: run.resolved_tool_identity.clone(),
         recorder_identity: run.recorder_identity.clone(),
         adapter: run.adapter.clone(),

@@ -1,7 +1,8 @@
 use crate::contracts::{
     ArtifactCapture, ArtifactDescriptor, ArtifactRecord, ArtifactStorage, Digest,
     EvidenceHandoffRecord, NativeDeliveryQualificationRecord, PlanPayload, PlanRecord,
-    PythonRuntimeQualificationRecord, RunRecord, RuntimeCapsuleRecord, SubjectCandidateRecord,
+    PythonRuntimeExecutionAdmissionRecord, PythonRuntimeQualificationRecord, RunRecord,
+    RuntimeCapsuleRecord, SubjectCandidateRecord,
 };
 use crate::run_validation;
 use crate::strict_json;
@@ -66,6 +67,7 @@ impl Workspace {
             "candidates",
             "qualifications",
             "python-qualifications",
+            "python-admissions",
             "handoffs",
         ] {
             ensure_real_dir(&workspace.state.join(name))?;
@@ -155,6 +157,7 @@ impl Workspace {
             "candidates",
             "qualifications",
             "python-qualifications",
+            "python-admissions",
             "handoffs",
         ] {
             validate_real_dir(&self.state.join(name))?;
@@ -632,6 +635,50 @@ impl Workspace {
         )?
         .into_iter()
         .map(|qualification_id| self.load_python_runtime_qualification(&qualification_id))
+        .collect()
+    }
+
+    pub fn write_python_runtime_execution_admission(
+        &self,
+        record: &PythonRuntimeExecutionAdmissionRecord,
+    ) -> Result<()> {
+        validate_prefixed_id(&record.admission_id, "admission_")?;
+        let path = self
+            .state
+            .join("python-admissions")
+            .join(format!("{}.json", record.admission_id));
+        self.write_json_atomic(&path, record, true)
+    }
+
+    pub fn load_python_runtime_execution_admission(
+        &self,
+        admission_id: &str,
+    ) -> Result<PythonRuntimeExecutionAdmissionRecord> {
+        validate_prefixed_id(admission_id, "admission_")?;
+        let path = self
+            .state
+            .join("python-admissions")
+            .join(format!("{admission_id}.json"));
+        let record: PythonRuntimeExecutionAdmissionRecord = read_strict_json(&path)?;
+        if record.schema_version != "python_runtime_execution_admission_record/v1"
+            || record.admission_id != admission_id
+            || digest_serialized(&record.payload)? != record.record_digest
+        {
+            bail!("Python execution admission record identity or digest mismatch");
+        }
+        Ok(record)
+    }
+
+    pub fn list_python_runtime_execution_admissions(
+        &self,
+    ) -> Result<Vec<PythonRuntimeExecutionAdmissionRecord>> {
+        registry_record_ids(
+            &self.state.join("python-admissions"),
+            "admission_",
+            "Python execution admission",
+        )?
+        .into_iter()
+        .map(|admission_id| self.load_python_runtime_execution_admission(&admission_id))
         .collect()
     }
 

@@ -7,7 +7,7 @@
   "adapter": { "id": "trust-meter-advisory", "version": "1" },
   "identity_contract": {
     "executable_candidates": ["trust-meter"],
-    "version_probe": null,
+    "version_probe": { "arguments": ["--version"] },
     "binary_digest_required": true,
     "python_distribution": "trust-meter",
     "supporting_tree_digest_required": true
@@ -30,22 +30,24 @@
     { "role": "native_stderr", "discovery": "captured_stream", "required_when": "spawned", "byte_policy": "exact" }
   ],
   "native_observation_contracts": [
-    { "namespace": "trust_meter", "name": "passed", "artifact_role": "native_stdout", "format": "json", "selector": "/passed", "required_when": "process_exited", "unknown_value_policy": "preserve_unrecognized" },
-    { "namespace": "trust_meter", "name": "overall_score", "artifact_role": "native_stdout", "format": "json", "selector": "/overall_score", "required_when": "process_exited", "unknown_value_policy": "preserve_unrecognized" }
+    { "namespace": "trust_meter", "name": "advisory_gate_met", "artifact_role": "native_stdout", "format": "json", "selector": "/result/advisory_gate_met", "required_when": "process_exited", "unknown_value_policy": "preserve_unrecognized" },
+    { "namespace": "trust_meter", "name": "threshold_met", "artifact_role": "native_stdout", "format": "json", "selector": "/result/threshold_met", "required_when": "process_exited", "unknown_value_policy": "preserve_unrecognized" },
+    { "namespace": "trust_meter", "name": "overall_score", "artifact_role": "native_stdout", "format": "json", "selector": "/result/overall_score", "required_when": "process_exited", "unknown_value_policy": "preserve_unrecognized" }
   ],
   "exit_code_contract": {
     "entries": [
-      { "code": 0, "native_meaning": "threshold_met" },
-      { "code": 1, "native_meaning": "threshold_not_met" }
+      { "code": 0, "native_meaning": "advisory_gate_met" },
+      { "code": 1, "native_meaning": "advisory_gate_not_met" },
+      { "code": 2, "native_meaning": "usage_or_validation_error" }
     ],
     "unknown_code_policy": "preserve_unrecognized"
   },
   "authority_contract": { "mode": "not_reported" },
   "limitations": [
     { "code": "python_runtime_closure_missing", "statement": "No admitted Windows capsule currently binds CPython and the complete trust-meter runtime closure." },
-    { "code": "ambient_ancestor_config", "statement": "The native CLI can discover .trust-meter.toml above the subject root; a future adapter must prevent ambient ancestor configuration from changing the measurement." },
+    { "code": "ambient_ancestor_config", "statement": "The only machine argv is --json-v1 --no-config, which selects Trust Meter's fixed builtin-static-v1 collectors and performs no ancestor .trust-meter.toml discovery. Exact --config file binding (configuration.mode exact_file plus sha256/byte_length) is reserved and is not an ambient fallback." },
     { "code": "heuristic_measure", "statement": "The result is a Python-oriented structural heuristic, not behavioral or security proof." },
-    { "code": "native_version_not_reported", "statement": "The current native CLI has no version command; the executable bytes are still pinned." },
+    { "code": "native_version_probe_available", "statement": "trust-meter --version prints the package version; EWB still pins executable bytes and does not treat the version string as authority." },
     { "code": "direct_process_not_os_sandbox", "statement": "Capability approval constrains this adapter invocation; it is not an operating-system sandbox." }
   ]
 }

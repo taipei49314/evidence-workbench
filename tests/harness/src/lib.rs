@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 pub mod build_identity;
+#[path = "../../../src/caller_observations.rs"]
+pub mod caller_observations;
 #[path = "../../../src/candidate_pins.rs"]
 pub mod candidate_pins;
 #[path = "../../../src/cli.rs"]
@@ -19,6 +21,8 @@ pub mod manifests;
 pub mod native;
 #[path = "../../../src/native_qualifications.rs"]
 pub mod native_qualifications;
+#[path = "../../../src/python_admissions.rs"]
+pub mod python_admissions;
 #[path = "../../../src/python_qualifications.rs"]
 pub mod python_qualifications;
 #[path = "../../../src/run_validation.rs"]

@@ -1,4 +1,5 @@
 pub mod build_identity;
+pub mod caller_observations;
 pub mod candidate_pins;
 pub mod cli;
 pub mod contracts;
@@ -8,6 +9,7 @@ pub mod git_subject;
 pub mod manifests;
 pub mod native;
 pub mod native_qualifications;
+pub mod python_admissions;
 pub mod python_qualifications;
 pub mod run_validation;
 pub mod runtime_capsules;

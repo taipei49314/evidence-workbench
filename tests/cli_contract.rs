@@ -359,6 +359,11 @@ fn read_only_registry_lists_are_empty_and_fail_atomically_on_unexpected_entries(
             "python-qualifications",
             "python-qualifications.list",
         ),
+        (
+            "python-admissions",
+            "python-admissions",
+            "python-admissions.list",
+        ),
         ("handoffs", "handoffs", "handoffs.list"),
     ] {
         let (code, value, stderr) = run_json(
@@ -1449,6 +1454,71 @@ fn python_qualification_cli_binds_exact_inventory_but_never_plans_or_executes() 
             .as_str()
             .unwrap()
             .contains("python_runtime_qualification_not_connected")
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/plans"))
+            .unwrap()
+            .count(),
+        plans_before
+    );
+
+    let (code, admitted, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-admissions",
+                "admit",
+                "--inventory-qualification",
+                &qualification_id,
+            ]),
+    );
+    assert_eq!(code, 0, "{admitted:?} {stderr}");
+    assert_eq!(admitted["command"], "python-admissions.admit");
+    assert_eq!(
+        admitted["data"]["payload"]["admission_state"]["state"],
+        "not_granted"
+    );
+    assert_eq!(admitted["data"]["payload"]["authority_effect"], "none");
+    let admission_id = admitted["data"]["admission_id"].as_str().unwrap();
+    let (code, verified, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-admissions", "verify", admission_id]),
+    );
+    assert_eq!(code, 0, "{verified:?} {stderr}");
+    assert_eq!(verified["data"]["admission_state"], "not_granted");
+    assert_eq!(
+        verified["data"]["execution_admission"],
+        "not_granted_by_residual_python_containment_blockers"
+    );
+    let (code, still_blocked, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--python-admission",
+                admission_id,
+                "--input-artifact",
+                archive["artifact_id"].as_str().unwrap(),
+            ]),
+    );
+    assert_eq!(code, 2, "{still_blocked:?} {stderr}");
+    assert!(
+        still_blocked["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("disabled")
+            || still_blocked["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("fail_closed"),
+        "{still_blocked:?}"
     );
     assert_eq!(
         fs::read_dir(temp.path().join(".ewb/plans"))
@@ -3267,4 +3337,326 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
     assert_eq!(object_files, vec![expected_object.clone()]);
     assert_eq!(fs::read(expected_object).unwrap(), bytes);
     assert_eq!(fs::read_dir(root.join(".ewb/tmp")).unwrap().count(), 0);
+}
+
+#[test]
+fn python_admission_registry_is_required_and_stays_not_granting() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let registry = temp.path().join(".ewb/python-admissions");
+    assert!(registry.is_dir());
+    let (code, listed, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-admissions", "list"]),
+    );
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    assert_eq!(listed["command"], "python-admissions.list");
+    assert_eq!(listed["data"], json!([]));
+
+    fs::remove_dir(&registry).unwrap();
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-admissions", "list"]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert_eq!(failure["ok"], false);
+}
+
+#[test]
+fn python_admission_is_rejected_for_non_slice_tools() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "greenwash",
+                "--python-admission",
+                "admission_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--subject",
+                ".",
+            ]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("only accepted by trust_meter_measure or phaseledger_measure"),
+        "{failure:?}"
+    );
+}
+
+#[test]
+fn inventory_qualification_cannot_be_used_as_python_admission() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--python-admission",
+                "qualification_00000000000000000000000000000000",
+                "--input-artifact",
+                "artifact_00000000000000000000000000000000",
+            ]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot be used as a python_runtime_execution_admission"),
+        "{failure:?}"
+    );
+}
+
+#[test]
+fn input_artifact_rejects_handoff_ids_and_does_not_scan_handoffs() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let handoffs = temp.path().join(".ewb/handoffs");
+    let marker = handoffs.join("scanned.marker");
+    let (code, failure, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--input-artifact",
+                "handoff_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    let message = failure["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("artifact_") || message.contains("runtime_capsule_required"),
+        "{failure:?}"
+    );
+    assert!(!message.contains("handoff_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(!marker.exists());
+    assert_eq!(fs::read_dir(&handoffs).unwrap().count(), 0);
+}
+
+#[test]
+fn trust_meter_and_phaseledger_stay_disabled_and_fail_closed() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    for tool in ["trust-meter", "phaseledger"] {
+        let (code, shown, stderr) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["tools", "show", tool]),
+        );
+        assert_eq!(code, 0, "{shown:?} {stderr}");
+        assert_eq!(shown["data"]["manifest"]["enabled_by_default"], false);
+        assert_eq!(
+            shown["data"]["upstream_pin"]["execution_readiness"]["state"],
+            "fail_closed"
+        );
+        assert_eq!(
+            shown["data"]["upstream_pin"]["admission"]["authority_effect"],
+            "none"
+        );
+        let selectors = shown["data"]["manifest"]["native_observation_contracts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["selector"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(!selectors.iter().any(|selector| *selector == "/passed"));
+        let (code, probe, stderr) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["tools", "probe", tool]),
+        );
+        assert_eq!(code, 2, "{probe:?} {stderr}");
+        assert!(
+            probe["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("fail_closed"),
+            "{probe:?}"
+        );
+    }
+
+    let (code, listed, stderr) = run_json(ewb().args(["--json", "tools", "list"]));
+    assert_eq!(code, 0, "{listed:?} {stderr}");
+    let ready = listed["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["upstream_pin"]["execution_readiness"]["state"] == "ready")
+        .map(|entry| entry["manifest_id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ready, vec!["tomorrowci-lab"]);
+}
+
+#[test]
+fn fresh_workspace_vertical_slice_stops_before_native_execution() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let subject = temp.path().join("subject-repo");
+    fs::create_dir_all(subject.join(".git")).unwrap();
+    fs::write(
+        subject.join(".trust-meter.toml"),
+        "[trust-meter]\nthreshold = 1\n",
+    )
+    .unwrap();
+    let (code, tm_plan, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "trust-meter",
+                "--subject",
+            ])
+            .arg(&subject)
+            .args(["--param", "threshold=75", "--param", "phase=preflight"]),
+    );
+    assert_eq!(code, 2, "{tm_plan:?} {stderr}");
+    assert!(
+        tm_plan["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("runtime_capsule_required")
+            || tm_plan["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("fail_closed")
+            || tm_plan["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("disabled"),
+        "{tm_plan:?}"
+    );
+
+    let observation = evidence_workbench::data_contract_validation::parse_phaseledger_caller_observation(
+        include_bytes!("../contracts/examples/phaseledger-caller-observation-v1.example.json"),
+    )
+    .unwrap();
+    let native = evidence_workbench::caller_observations::map_to_phaseledger_v1(&observation)
+        .unwrap();
+    assert!(native.get("advisory_gate_met").is_none());
+    assert!(native.get("overall_score").is_none());
+    assert!(native.get("threshold_met").is_none());
+    let observation_path = temp.path().join("caller-observation.json");
+    fs::write(
+        &observation_path,
+        serde_json::to_vec_pretty(&native).unwrap(),
+    )
+    .unwrap();
+
+    let (code, imported, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "artifacts",
+                "add",
+                "--file",
+            ])
+            .arg(&observation_path)
+            .args(["--role", "handoff_input", "--media-type", "application/json"]),
+    );
+    assert_eq!(code, 0, "{imported:?} {stderr}");
+    let artifact_id = imported["data"]["artifact_id"].as_str().unwrap();
+    let artifact_digest = imported["data"]["digest"]["value"].as_str().unwrap().to_owned();
+
+    let handoffs = temp.path().join(".ewb/handoffs");
+    let marker = handoffs.join("scanned.marker");
+    let (code, planned, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--input-artifact",
+                artifact_id,
+            ]),
+    );
+    assert_eq!(code, 2, "{planned:?} {stderr}");
+    let message = planned["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("runtime_capsule_required")
+            || message.contains("python_runtime_qualification_not_connected")
+            || message.contains("disabled"),
+        "{planned:?}"
+    );
+    assert!(!marker.exists());
+    assert_eq!(fs::read_dir(&handoffs).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(temp.path().join(".ewb/plans")).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(temp.path().join(".ewb/runs")).unwrap().count(), 0);
+
+    let (code, doctor, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .arg("doctor"),
+    );
+    assert_eq!(code, 0, "{doctor:?} {stderr}");
+    assert_eq!(doctor["data"]["workspace_check"]["healthy"], true);
+    let (code, verified, stderr) = run_json(
+        ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["artifacts", "verify", artifact_id]),
+    );
+    assert_eq!(code, 0, "{verified:?} {stderr}");
+    assert_eq!(verified["data"]["digest"]["value"], artifact_digest);
+    for tool in ["trust-meter", "phaseledger"] {
+        let (code, shown, stderr) = run_json(
+            ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["tools", "show", tool]),
+        );
+        assert_eq!(code, 0, "{shown:?} {stderr}");
+        assert_eq!(
+            shown["data"]["upstream_pin"]["execution_readiness"]["state"],
+            "fail_closed"
+        );
+    }
+}
+
+#[test]
+fn ewb_source_does_not_synthesize_trust_meter_fields_into_phaseledger_observations() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for relative in ["src/cli.rs", "src/native.rs", "src/run_validation.rs"] {
+        let source = fs::read_to_string(root.join(relative)).unwrap();
+        assert!(
+            !source.contains("advisory_gate_met")
+                || !source.contains("phaseledger")
+                || !source.to_ascii_lowercase().contains("observation"),
+            "{relative} must not synthesize Trust Meter projections into Phaseledger observations"
+        );
+        assert!(
+            !source.contains("overall_score") || !source.contains("phaseledger_measure"),
+            "{relative} must not copy Trust Meter scores into Phaseledger"
+        );
+    }
 }
