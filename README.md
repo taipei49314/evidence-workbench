@@ -256,7 +256,9 @@ admitted the same way. EWB does not vendor or download that zip. The stock
 `python313._pth` must be replaced with the isolated grammar before admit;
 comments and `#import site` fail closed. Five implementable checks may then
 be `satisfied` while admission stays `not_granted` and the Trust Meter /
-Phaseledger pins stay `fail_closed`. See
+Phaseledger pins stay `fail_closed`. The gated operator path may then run
+`prove-containment` and `prove-network` against the bound official
+`python.exe`; those records still cannot grant admission. See
 [`docs/verification/python-admission-real-embed.md`](docs/verification/python-admission-real-embed.md).
 
 ### Untrusted GitHub discovery handoff

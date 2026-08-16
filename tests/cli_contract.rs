@@ -2270,6 +2270,82 @@ fn python_admission_cli_accepts_official_embed_bytes_but_stays_not_granted() {
         assert_eq!(check_state(code), "failed", "{code}");
     }
     let admission_id = admitted["data"]["admission_id"].as_str().unwrap();
+    let (code, contained, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-admissions",
+                "prove-containment",
+                "--admission",
+                admission_id,
+            ]),
+    );
+    assert_eq!(code, 0, "{contained:?} {stderr}");
+    assert_eq!(
+        contained["data"]["payload"]["schema_version"],
+        "python_runtime_execution_admission/v2"
+    );
+    assert_eq!(
+        contained["data"]["payload"]["admission_state"]["state"],
+        "not_granted"
+    );
+    let contained_state = |code: &str| {
+        contained["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["code"] == code)
+            .unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(contained_state("os_network_egress_denial"), "failed");
+    assert_eq!(
+        contained_state("python_active_process_limit_one"),
+        "satisfied"
+    );
+    assert_eq!(
+        contained_state("python_creation_time_job_assignment"),
+        "satisfied"
+    );
+    let v2_id = contained["data"]["admission_id"].as_str().unwrap();
+    let (code, networked, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-admissions", "prove-network", "--admission", v2_id]),
+    );
+    assert_eq!(code, 0, "{networked:?} {stderr}");
+    assert_eq!(
+        networked["data"]["payload"]["schema_version"],
+        "python_runtime_execution_admission/v3"
+    );
+    assert_eq!(
+        networked["data"]["payload"]["admission_state"]["state"],
+        "not_granted"
+    );
+    let networked_state = |code: &str| {
+        networked["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["code"] == code)
+            .unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(networked_state("os_network_egress_denial"), "satisfied");
+    assert_eq!(
+        networked_state("python_active_process_limit_one"),
+        "satisfied"
+    );
+    assert_eq!(
+        networked_state("python_creation_time_job_assignment"),
+        "satisfied"
+    );
     let plans_before = fs::read_dir(temp.path().join(".ewb/plans"))
         .unwrap()
         .count();

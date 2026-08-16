@@ -111,7 +111,21 @@ fn prove_bound_python_network_windows(
         Ok(profile) => profile,
         Err(_) => return Ok(ResidualNetworkProof::all_failed()),
     };
-    for path in [launcher, scratch, empty_path.as_path(), temp.as_path()] {
+    let mut grant_paths = vec![
+        launcher.to_path_buf(),
+        scratch.to_path_buf(),
+        empty_path.clone(),
+        temp.clone(),
+    ];
+    if let Some(home) = launcher.parent() {
+        grant_paths.push(home.to_path_buf());
+        if let Ok(entries) = fs::read_dir(home) {
+            for entry in entries.flatten() {
+                grant_paths.push(entry.path());
+            }
+        }
+    }
+    for path in &grant_paths {
         if grant_appcontainer_access(path, profile.sid).is_err() {
             return Ok(ResidualNetworkProof::all_failed());
         }

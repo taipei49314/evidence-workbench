@@ -1,11 +1,12 @@
 # Real CPython embed admission (still not granted)
 
-This is an operator procedure. EWB does not vendor the official embed zip,
-does not download it from an adapter, and does not spawn `python.exe`.
+This is an operator procedure. EWB does not vendor the official embed zip
+and does not download it from an adapter. `python-admissions admit` still
+does not spawn `python.exe`. `prove-containment` and `prove-network` may
+start the bound official `python.exe` only to record Job Object and
+AppContainer observations.
 
-A satisfied implementable check is not execution admission. Residual
-containment is recorded as `failed` because spawnless admit cannot prove
-OS containment of `python.exe`; those checks still cannot be `satisfied`.
+A satisfied implementable or residual check is not execution admission.
 Trust Meter and Phaseledger stay `fail_closed` and `enabled_by_default: false`.
 
 ## Pinned official embed
@@ -64,6 +65,14 @@ The official zip itself is the `--cpython-archive-artifact`. The extracted
 `capsules snapshot` of a host interpreter is not this path. Snapshot records
 `host_interpreter_copy` and stays fail-closed.
 
+## Prove root is a disposable allowlist, not a capsule extract
+
+`prove-containment` and `prove-network` copy the bound `python.exe` and the
+admitted isolated `_pth`, then extract only these members from the verified
+official archive when present: `python313.dll`, `python313.zip`,
+`vcruntime140.dll`, `vcruntime140_1.dll`. They do not extract `pythonw.exe`,
+LICENSE, or `site/`. That private root is not an execution permit.
+
 ## Wheel without spawning Python
 
 Supply a Phaseledger 0.6.0 wheel as `EWB_PHASELEDGER_WHEEL`. Unpack it with
@@ -95,9 +104,15 @@ $qualification = ewb --json --workspace $ws python-qualifications create `
   --installed-record-path site/<dist-info>/RECORD
 $admission = ewb --json --workspace $ws python-admissions admit `
   --inventory-qualification $qualification.data.qualification_id
+$containment = ewb --json --workspace $ws python-admissions prove-containment `
+  --admission $admission.data.admission_id
+$network = ewb --json --workspace $ws python-admissions prove-network `
+  --admission $containment.data.admission_id
 ```
 
 ## Expected admission checks
+
+Admit (`python_runtime_execution_admission/v1`):
 
 ```text
 cpython_archive_semantics           satisfied
@@ -108,6 +123,24 @@ python_private_materialization      satisfied
 os_network_egress_denial            failed
 python_active_process_limit_one     failed
 python_creation_time_job_assignment failed
+admission_state                     not_granted
+```
+
+`prove-containment` (`v2`):
+
+```text
+python_creation_time_job_assignment satisfied
+python_active_process_limit_one     satisfied
+os_network_egress_denial            failed
+admission_state                     not_granted
+```
+
+`prove-network` (`v3`):
+
+```text
+python_creation_time_job_assignment satisfied
+python_active_process_limit_one     satisfied
+os_network_egress_denial            satisfied
 admission_state                     not_granted
 ```
 
@@ -125,4 +158,5 @@ runs only on Windows when both environment variables are set:
 
 Unset variables skip the test so Ubuntu CI stays green. A set variable with
 the wrong embed digest, a stock `_pth`, or a RECORD that does not close the
-wheel fails the test.
+wheel fails the test. When the variables are set, the test also runs
+`prove-containment` and `prove-network` against the official `python.exe`.
