@@ -809,6 +809,8 @@ pub struct PythonAdmissionRef {
 pub struct PythonRuntimeExecutionAdmission {
     pub schema_version: String,
     pub observed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_admission_ref: Option<PythonAdmissionRef>,
     pub inventory_qualification_ref: NativeQualificationRef,
     pub tool_ref: ToolRef,
     pub upstream_pin_ref: UpstreamPinRef,

@@ -130,6 +130,17 @@ presence does not grant admission. `python_runtime_execution_admission_record/v1
 wraps that payload under an opaque `admission_<32hex>` locator; its
 `record_digest` is SHA-256 over compact typed payload JSON.
 
+`python_runtime_execution_admission/v2` is a prove record, not an execution
+permit. `python-admissions prove-containment --admission` cites one verified
+v1 admission and may start the bound `python.exe` with fixed
+`-I -S -B -X utf8 -c raise SystemExit(0)` only to CreateProcess-assign it
+through `PROC_THREAD_ATTRIBUTE_JOB_LIST` and observe ActiveProcessLimit=1.
+`admit` never calls that path and still does not spawn Python. Job-assignment
+and process-limit checks may be `satisfied`. `os_network_egress_denial`
+stays `failed` because a Job Object is not a network filter. The only
+admission state is still `not_granted`. An empty Job Object or a post-start
+`AssignProcessToJobObject` is not creation-time assignment.
+
 `phaseledger-caller-observation/v1` is a caller-authored cite contract for a
 future Phaseledger 0.6.0 observation file. It requires a present exact artifact
 ID, matching SHA-256, a claim that names that ID/digest plus

@@ -225,6 +225,12 @@ pub enum PythonAdmissionsSubcommand {
     Show { admission_id: String },
     /// Re-verify the typed payload digest, inventory citation, and not_granted state.
     Verify { admission_id: String },
+    /// Prove creation-time Job Object assignment of the bound python.exe.
+    /// Does not grant admission. Admit never calls this path.
+    ProveContainment {
+        #[arg(long, value_name = "ADMISSION_ID")]
+        admission: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -717,6 +723,10 @@ fn python_admissions(cli: &Cli, command: &PythonAdmissionsCommand) -> Result<Com
         PythonAdmissionsSubcommand::Verify { admission_id } => success(
             "python-admissions.verify",
             serde_json::to_value(python_admissions::verify(&workspace, admission_id)?)?,
+        ),
+        PythonAdmissionsSubcommand::ProveContainment { admission } => success(
+            "python-admissions.prove-containment",
+            serde_json::to_value(python_admissions::prove_containment(&workspace, admission)?)?,
         ),
     }
 }
