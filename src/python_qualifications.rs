@@ -756,7 +756,7 @@ fn validate_installed_record_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn fixed_launch_contract() -> PythonLaunchContract {
+pub fn fixed_launch_contract() -> PythonLaunchContract {
     PythonLaunchContract {
         mode: "direct_exec".to_owned(),
         launcher_source: "capsule_launcher".to_owned(),

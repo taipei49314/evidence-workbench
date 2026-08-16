@@ -1,16 +1,20 @@
 use crate::contracts::{
-    ContractAuthorityEffect, NativeQualificationRef, PythonAdmissionCheck,
-    PythonAdmissionCheckState, PythonAdmissionRef, PythonAdmissionState,
+    ArtifactRecordRef, ContractAuthorityEffect, ExactArtifactBinding, NativeQualificationRef,
+    PythonAdmissionCheck, PythonAdmissionCheckState, PythonAdmissionRef, PythonAdmissionState,
     PythonAdmissionStateValue, PythonRuntimeExecutionAdmission,
-    PythonRuntimeExecutionAdmissionRecord, ToolRef, UpstreamPinRef,
+    PythonRuntimeExecutionAdmissionRecord, PythonRuntimeQualification, ToolRef, UpstreamPinRef,
 };
 use crate::python_qualifications;
-use crate::{manifests, native, workspace};
 use crate::workspace::Workspace;
+use crate::{manifests, native, runtime_capsules, workspace};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use sha2::{Digest as _, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::{Cursor, Read, Write};
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 pub const ALLOWED_OPERATIONS: &[&str] = &["trust_meter_measure", "phaseledger_measure"];
@@ -149,12 +153,15 @@ pub fn validate_payload(payload: &PythonRuntimeExecutionAdmission) -> Result<()>
             bail!("Python execution admission must retain residual containment blocker {residual}");
         }
     }
-    let _ = IMPLEMENTABLE_CODES;
     Ok(())
 }
 
-pub fn admit(workspace: &Workspace, inventory_qualification_id: &str) -> Result<PythonRuntimeExecutionAdmissionRecord> {
-    let inventory_record = python_qualifications::load_verified(workspace, inventory_qualification_id)?;
+pub fn admit(
+    workspace: &Workspace,
+    inventory_qualification_id: &str,
+) -> Result<PythonRuntimeExecutionAdmissionRecord> {
+    let inventory_record =
+        python_qualifications::load_verified(workspace, inventory_qualification_id)?;
     python_qualifications::validate_payload(&inventory_record.payload)?;
     if inventory_record.payload.qualification_state.state
         != crate::contracts::PythonQualificationStateValue::Incomplete
@@ -168,45 +175,21 @@ pub fn admit(workspace: &Workspace, inventory_qualification_id: &str) -> Result<
     }
 
     let recorder = native::recorder_identity()?;
-    let launch = &inventory_record.payload.launch_contract;
-    let launch_isolated = launch.mode == "direct_exec"
-        && launch.fixed_arguments == ["-I", "-S", "-B", "-X", "utf8"]
-        && launch.environment.inheritance == "none"
-        && launch.environment.other_variables == "absent"
-        && launch
-            .environment
-            .variables
-            .iter()
-            .any(|variable| variable.name == "PATH" && variable.source == "ewb_owned_empty_directory");
-    let path_artifact = workspace.load_artifact(
-        &inventory_record
-            .payload
-            .runtime_inputs
-            .path_configuration
-            .artifact
-            .artifact_ref
-            .artifact_id,
-    )?;
-    let path_bytes = workspace.verify_descriptor(&path_artifact.artifact)?;
-    let path_text = std::fs::read_to_string(&path_bytes).unwrap_or_default();
-    let path_isolated = !path_text.lines().any(|line| {
-        let trimmed = line.trim();
-        trimmed == "import site" || trimmed.starts_with("import site ")
-    });
-
+    let proofs = evaluate_implementable_proofs(workspace, &inventory_record.payload)?;
     let mut checks = Vec::new();
     for code in CHECK_CODES {
-        let state = match *code {
-            "python_launch_harness" if launch_isolated => PythonAdmissionCheckState::Satisfied,
-            "python_path_configuration_isolation" if path_isolated => {
-                PythonAdmissionCheckState::Satisfied
-            }
-            _ => PythonAdmissionCheckState::NotImplemented,
+        let (state, evidence_refs) = if RESIDUAL_CONTAINMENT_CODES.contains(code) {
+            (PythonAdmissionCheckState::NotImplemented, Vec::new())
+        } else {
+            proofs
+                .get(*code)
+                .cloned()
+                .unwrap_or((PythonAdmissionCheckState::Failed, Vec::new()))
         };
         checks.push(PythonAdmissionCheck {
             code: (*code).to_owned(),
             state,
-            evidence_refs: Vec::new(),
+            evidence_refs,
         });
     }
     let blocker_codes = checks
@@ -255,6 +238,601 @@ pub fn admit(workspace: &Workspace, inventory_qualification_id: &str) -> Result<
     workspace.write_python_runtime_execution_admission(&record)?;
     verify_record(workspace, &record)?;
     Ok(record)
+}
+
+type CheckOutcome = (PythonAdmissionCheckState, Vec<ArtifactRecordRef>);
+
+fn evaluate_implementable_proofs(
+    workspace: &Workspace,
+    inventory: &PythonRuntimeQualification,
+) -> Result<BTreeMap<&'static str, CheckOutcome>> {
+    let capsule = runtime_capsules::load_verified(workspace, &inventory.capsule_ref.id)?;
+    if capsule.record_digest != inventory.capsule_ref.record_digest {
+        bail!("Python execution admission inventory capsule digest mismatch");
+    }
+    let launcher_name = Path::new(&capsule.payload.launcher.path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("capsule launcher path must have a UTF-8 file name")?;
+
+    let archive = load_binding(workspace, &inventory.runtime_inputs.cpython_archive)?;
+    let path_config = load_binding(
+        workspace,
+        &inventory.runtime_inputs.path_configuration.artifact,
+    )?;
+    let wrapper = load_binding(workspace, &inventory.runtime_inputs.wrapper.artifact)?;
+    let mut wheel_pairs = Vec::new();
+    for pair in &inventory.runtime_inputs.wheel_records {
+        wheel_pairs.push((
+            load_binding(workspace, &pair.wheel)?,
+            load_binding(workspace, &pair.installed_record.artifact)?,
+        ));
+    }
+
+    let archive_proof = prove_cpython_archive(&archive.1, launcher_name);
+    let stdlib_name = archive_proof.as_ref().ok().cloned();
+    let path_text = std::str::from_utf8(&path_config.1)
+        .map_err(|_| anyhow::anyhow!("path configuration is not UTF-8"));
+    let path_proof =
+        path_text.and_then(|text| prove_path_configuration(text, stdlib_name.as_deref()));
+    let launch_proof = prove_launch_harness(inventory, &wrapper.1);
+    let wheel_proof = prove_wheel_record_closure(&wheel_pairs);
+    let materialization_proof = prove_private_materialization(
+        workspace,
+        &capsule.payload.launcher.artifact_id,
+        inventory,
+        &archive.0,
+        &path_config.0,
+        &wrapper.0,
+        &wheel_pairs,
+    );
+
+    let mut proofs = BTreeMap::new();
+    proofs.insert(
+        "cpython_archive_semantics",
+        outcome(
+            archive_proof.err(),
+            vec![ref_of(&inventory.runtime_inputs.cpython_archive)],
+        ),
+    );
+    proofs.insert(
+        "python_path_configuration_isolation",
+        outcome(
+            path_proof.err(),
+            vec![ref_of(
+                &inventory.runtime_inputs.path_configuration.artifact,
+            )],
+        ),
+    );
+    proofs.insert(
+        "python_launch_harness",
+        outcome(
+            launch_proof.err(),
+            vec![ref_of(&inventory.runtime_inputs.wrapper.artifact)],
+        ),
+    );
+    proofs.insert(
+        "wheel_record_closure",
+        outcome(
+            wheel_proof.err(),
+            inventory
+                .runtime_inputs
+                .wheel_records
+                .iter()
+                .flat_map(|pair| [ref_of(&pair.wheel), ref_of(&pair.installed_record.artifact)])
+                .collect(),
+        ),
+    );
+    proofs.insert(
+        "python_private_materialization",
+        outcome(
+            materialization_proof.err(),
+            materialization_evidence(inventory),
+        ),
+    );
+    for code in IMPLEMENTABLE_CODES {
+        proofs
+            .entry(*code)
+            .or_insert((PythonAdmissionCheckState::Failed, Vec::new()));
+    }
+    Ok(proofs)
+}
+
+fn outcome(error: Option<anyhow::Error>, evidence: Vec<ArtifactRecordRef>) -> CheckOutcome {
+    match error {
+        None => (PythonAdmissionCheckState::Satisfied, evidence),
+        Some(_) => (PythonAdmissionCheckState::Failed, Vec::new()),
+    }
+}
+
+fn ref_of(binding: &ExactArtifactBinding) -> ArtifactRecordRef {
+    binding.artifact_ref.clone()
+}
+
+fn materialization_evidence(inventory: &PythonRuntimeQualification) -> Vec<ArtifactRecordRef> {
+    let mut refs = vec![
+        ref_of(&inventory.runtime_inputs.cpython_archive),
+        ref_of(&inventory.runtime_inputs.path_configuration.artifact),
+        ref_of(&inventory.runtime_inputs.wrapper.artifact),
+    ];
+    for pair in &inventory.runtime_inputs.wheel_records {
+        refs.push(ref_of(&pair.wheel));
+        refs.push(ref_of(&pair.installed_record.artifact));
+    }
+    refs
+}
+
+fn load_binding(
+    workspace: &Workspace,
+    binding: &ExactArtifactBinding,
+) -> Result<(crate::contracts::ArtifactRecord, Vec<u8>)> {
+    let record = workspace.load_artifact(&binding.artifact_ref.artifact_id)?;
+    if record.record_digest != binding.artifact_ref.record_digest
+        || record.artifact.digest != binding.digest
+        || record.artifact.byte_length != binding.byte_length
+    {
+        bail!("Python execution admission artifact binding changed");
+    }
+    let bytes = workspace.read_verified_descriptor(&record.artifact)?;
+    Ok((record, bytes))
+}
+
+fn prove_cpython_archive(bytes: &[u8], launcher_name: &str) -> Result<String> {
+    if bytes.len() as u64 > 64 * 1024 * 1024 {
+        bail!("CPython archive exceeds the admission size bound");
+    }
+    let members = inspect_zip(bytes, "CPython archive")?;
+    let mut launcher = false;
+    let mut stdlib = None;
+    for (name, member) in &members {
+        let basename = name.rsplit('/').next().unwrap_or(name);
+        if basename.eq_ignore_ascii_case(launcher_name) {
+            if name.contains('/') || launcher {
+                bail!("CPython archive launcher member is duplicated or nested");
+            }
+            if member.is_empty() {
+                bail!("CPython archive launcher member is empty");
+            }
+            launcher = true;
+        }
+        if is_stdlib_zip_name(basename) {
+            if name.contains('/') || stdlib.is_some() {
+                bail!("CPython archive stdlib zip is duplicated or nested");
+            }
+            if member.is_empty() {
+                bail!("CPython archive stdlib zip is empty");
+            }
+            stdlib = Some(basename.to_owned());
+        }
+        if basename.rsplit('.').next() == Some("exe")
+            && !basename.eq_ignore_ascii_case("python.exe")
+            && !basename.eq_ignore_ascii_case("pythonw.exe")
+        {
+            bail!("CPython archive contains an unexpected executable {basename}");
+        }
+    }
+    if !launcher {
+        bail!("CPython archive is missing launcher {launcher_name}");
+    }
+    stdlib.context("CPython archive is missing a python3XX.zip stdlib member")
+}
+
+fn prove_path_configuration(text: &str, stdlib_name: Option<&str>) -> Result<()> {
+    if text.contains('\0') || text.contains('\\') {
+        bail!("path configuration contains NUL or backslash");
+    }
+    let mut saw_stdlib = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let lowered = line.to_ascii_lowercase();
+        if lowered.starts_with("import ")
+            || lowered.contains("sitecustomize")
+            || lowered.contains("usercustomize")
+            || lowered.contains("site-packages")
+            || lowered.contains("appdata")
+            || Path::new(line).is_absolute()
+            || line.contains(':')
+            || line.contains("..")
+        {
+            bail!("path configuration admits site, sitecustomize, or an ambient path");
+        }
+        if is_stdlib_zip_name(line) {
+            if let Some(expected) = stdlib_name {
+                if line != expected {
+                    bail!("path configuration stdlib zip does not match the CPython archive");
+                }
+            }
+            saw_stdlib = true;
+            continue;
+        }
+        if line == "site" || line == "." {
+            continue;
+        }
+        bail!("path configuration line {line:?} is outside the isolated allowlist");
+    }
+    if !saw_stdlib {
+        bail!("path configuration must name a python3XX.zip stdlib member");
+    }
+    Ok(())
+}
+
+fn prove_launch_harness(
+    inventory: &PythonRuntimeQualification,
+    wrapper_bytes: &[u8],
+) -> Result<()> {
+    if inventory.launch_contract != python_qualifications::fixed_launch_contract() {
+        bail!("Python launch harness is not the fixed isolated contract");
+    }
+    if inventory.runtime_inputs.wrapper.contract_id != python_qualifications::WRAPPER_CONTRACT_ID
+        || inventory.runtime_inputs.wrapper.artifact.digest.value
+            != python_qualifications::WRAPPER_SHA256
+        || inventory.runtime_inputs.wrapper.artifact.byte_length
+            != python_qualifications::WRAPPER_BYTES.len() as u64
+        || wrapper_bytes != python_qualifications::WRAPPER_BYTES
+    {
+        bail!("Python launch harness wrapper bytes do not match the embedded contract");
+    }
+    Ok(())
+}
+
+fn prove_wheel_record_closure(
+    pairs: &[(
+        (crate::contracts::ArtifactRecord, Vec<u8>),
+        (crate::contracts::ArtifactRecord, Vec<u8>),
+    )],
+) -> Result<()> {
+    if pairs.is_empty() {
+        bail!("wheel RECORD closure requires at least one wheel pair");
+    }
+    for (wheel, installed) in pairs {
+        let members = inspect_zip(&wheel.1, "wheel")?;
+        let wheel_record = members
+            .iter()
+            .find(|(name, _)| name.ends_with(".dist-info/RECORD"))
+            .context("wheel is missing a .dist-info/RECORD")?;
+        let wheel_entries = parse_record(&wheel_record.1)?;
+        let installed_entries = parse_record(&installed.1)?;
+        if wheel_entries.is_empty() || installed_entries.is_empty() {
+            bail!("wheel or installed RECORD is empty");
+        }
+        let mut seen = BTreeSet::new();
+        for (path, hash, size) in &wheel_entries {
+            if !seen.insert(path.to_ascii_lowercase()) {
+                bail!("wheel RECORD contains a case-folded path collision");
+            }
+            if path.ends_with("/RECORD") || path == "RECORD" {
+                continue;
+            }
+            let member = members
+                .iter()
+                .find(|(name, _)| name == path)
+                .with_context(|| format!("wheel RECORD path {path} is missing from the wheel"))?;
+            if member.1.len() as u64 != *size {
+                bail!("wheel RECORD size does not match member {path}");
+            }
+            if hash != &record_hash(&member.1) {
+                bail!("wheel RECORD digest does not match member {path}");
+            }
+            let installed = installed_entries
+                .iter()
+                .find(|(installed_path, _, _)| installed_path == path)
+                .with_context(|| format!("installed RECORD is missing wheel path {path}"))?;
+            if installed.1 != *hash || installed.2 != *size {
+                bail!("installed RECORD does not match wheel RECORD for {path}");
+            }
+        }
+        for (path, _, _) in &installed_entries {
+            if path.ends_with("/RECORD") || path == "RECORD" {
+                continue;
+            }
+            if !wheel_entries
+                .iter()
+                .any(|(wheel_path, _, _)| wheel_path == path)
+            {
+                bail!("installed RECORD contains extra path {path}");
+            }
+        }
+        for (name, _) in &members {
+            if name.ends_with("/RECORD") || name == "RECORD" {
+                continue;
+            }
+            if !wheel_entries.iter().any(|(path, _, _)| path == name) {
+                bail!("wheel contains extra member {name} not listed in RECORD");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn prove_private_materialization(
+    workspace: &Workspace,
+    launcher_artifact_id: &str,
+    inventory: &PythonRuntimeQualification,
+    archive: &crate::contracts::ArtifactRecord,
+    path_config: &crate::contracts::ArtifactRecord,
+    wrapper: &crate::contracts::ArtifactRecord,
+    wheel_pairs: &[(
+        (crate::contracts::ArtifactRecord, Vec<u8>),
+        (crate::contracts::ArtifactRecord, Vec<u8>),
+    )],
+) -> Result<()> {
+    let launcher = workspace.load_artifact(launcher_artifact_id)?;
+    let mut expected = vec![
+        ("launcher".to_owned(), launcher),
+        ("cpython-archive.zip".to_owned(), archive.clone()),
+        ("python._pth".to_owned(), path_config.clone()),
+        ("wrapper.py".to_owned(), wrapper.clone()),
+    ];
+    for (index, (wheel, _)) in wheel_pairs.iter().enumerate() {
+        expected.push((format!("wheel-{index}.whl"), wheel.0.clone()));
+        let installed = workspace.load_artifact(
+            &inventory.runtime_inputs.wheel_records[index]
+                .installed_record
+                .artifact
+                .artifact_ref
+                .artifact_id,
+        )?;
+        expected.push((format!("record-{index}.RECORD"), installed));
+    }
+
+    let root = workspace
+        .state
+        .join("tmp")
+        .join(format!("admission-{}", Uuid::new_v4().simple()));
+    fs::create_dir(&root).context("cannot create private admission materialization root")?;
+    let _cleanup = TmpRoot(root.clone());
+    reject_reparse(&root, true)?;
+
+    let mut pre = BTreeMap::new();
+    for (name, record) in &expected {
+        let destination = root.join(name);
+        copy_verified_create_new(workspace, record, &destination)?;
+        pre.insert(name.clone(), record.artifact.digest.value.clone());
+    }
+
+    let mut post = BTreeMap::new();
+    for entry in fs::read_dir(&root)? {
+        let entry = entry?;
+        let metadata = fs::symlink_metadata(entry.path())?;
+        if metadata.file_type().is_symlink() || is_reparse(&metadata) {
+            bail!("private admission root contains a link or reparse point");
+        }
+        if !metadata.is_file() {
+            bail!("private admission root contains an unexpected directory");
+        }
+        if !is_single_link(&entry.path())? {
+            bail!("private admission file is not a single-link copy");
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("private admission file name is not UTF-8"))?;
+        let bytes = fs::read(entry.path())?;
+        post.insert(name, hex::encode(Sha256::digest(&bytes)));
+    }
+    if pre != post {
+        bail!("private admission materialization inventory changed");
+    }
+    Ok(())
+}
+
+fn copy_verified_create_new(
+    workspace: &Workspace,
+    record: &crate::contracts::ArtifactRecord,
+    destination: &Path,
+) -> Result<()> {
+    let bytes = workspace.read_verified_descriptor(&record.artifact)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .context("cannot create a private single-link admission copy")?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
+    let metadata = fs::symlink_metadata(destination)?;
+    if !metadata.is_file() || is_reparse(&metadata) || !is_single_link(destination)? {
+        bail!("private admission copy is not a regular single-link file");
+    }
+    if hex::encode(Sha256::digest(&bytes)) != record.artifact.digest.value
+        || bytes.len() as u64 != record.artifact.byte_length
+    {
+        bail!("private admission copy digest mismatch");
+    }
+    Ok(())
+}
+
+struct TmpRoot(PathBuf);
+
+impl Drop for TmpRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn inspect_zip(bytes: &[u8], label: &str) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .with_context(|| format!("{label} is not a valid ZIP"))?;
+    if archive.is_empty() || archive.len() > 4096 {
+        bail!("{label} ZIP entry count is outside the admitted range");
+    }
+    let mut names = BTreeSet::new();
+    let mut members = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        if entry.encrypted() {
+            bail!("{label} ZIP contains encrypted content");
+        }
+        let name = entry.name().replace('\\', "/");
+        if !names.insert(name.to_ascii_lowercase()) {
+            bail!("{label} ZIP contains a case-folded path collision");
+        }
+        let enclosed = entry
+            .enclosed_name()
+            .with_context(|| format!("{label} ZIP contains a traversal path"))?;
+        if enclosed
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            bail!("{label} ZIP entry path is not canonical");
+        }
+        if entry
+            .unix_mode()
+            .is_some_and(|mode| mode & 0o170000 == 0o120000)
+        {
+            bail!("{label} ZIP contains a symbolic link");
+        }
+        if entry.is_dir() {
+            continue;
+        }
+        if entry.size() > 64 * 1024 * 1024 {
+            bail!("{label} ZIP member exceeds the admission size bound");
+        }
+        let mut member = Vec::new();
+        entry.read_to_end(&mut member)?;
+        if member.len() as u64 != entry.size() {
+            bail!("{label} ZIP member decompression length mismatch");
+        }
+        members.push((name, member));
+    }
+    Ok(members)
+}
+
+fn parse_record(bytes: &[u8]) -> Result<Vec<(String, String, u64)>> {
+    let text = std::str::from_utf8(bytes).context("RECORD is not UTF-8")?;
+    if text.contains('\0') {
+        bail!("RECORD contains NUL");
+    }
+    let mut entries = Vec::new();
+    let mut seen = BTreeSet::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() != 3 {
+            bail!("RECORD line is not path,hash,size");
+        }
+        let path = parts[0].replace('\\', "/");
+        if path.is_empty()
+            || path.starts_with('/')
+            || path.contains("..")
+            || Path::new(&path).is_absolute()
+        {
+            bail!("RECORD path is not a relative canonical member");
+        }
+        if !seen.insert(path.to_ascii_lowercase()) {
+            bail!("RECORD contains a case-folded path collision");
+        }
+        let size = if parts[2].is_empty() {
+            0
+        } else {
+            parts[2]
+                .parse::<u64>()
+                .context("RECORD size is not an integer")?
+        };
+        entries.push((path, parts[1].to_owned(), size));
+    }
+    Ok(entries)
+}
+
+fn record_hash(bytes: &[u8]) -> String {
+    format!("sha256={}", urlsafe_b64_nopad(&Sha256::digest(bytes)))
+}
+
+fn urlsafe_b64_nopad(bytes: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let b0 = bytes[index];
+        let b1 = if index + 1 < bytes.len() {
+            bytes[index + 1]
+        } else {
+            0
+        };
+        let b2 = if index + 2 < bytes.len() {
+            bytes[index + 2]
+        } else {
+            0
+        };
+        let n = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
+        out.push(TABLE[((n >> 18) & 63) as usize] as char);
+        out.push(TABLE[((n >> 12) & 63) as usize] as char);
+        if index + 1 < bytes.len() {
+            out.push(TABLE[((n >> 6) & 63) as usize] as char);
+        }
+        if index + 2 < bytes.len() {
+            out.push(TABLE[(n & 63) as usize] as char);
+        }
+        index += 3;
+    }
+    out
+}
+
+fn is_stdlib_zip_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() == 13
+        && bytes.starts_with(b"python3")
+        && bytes.ends_with(b".zip")
+        && bytes[7].is_ascii_digit()
+        && bytes[8].is_ascii_digit()
+}
+
+fn reject_reparse(path: &Path, directory: bool) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if is_reparse(&metadata) || metadata.file_type().is_symlink() {
+        bail!("admission path is a link or reparse point");
+    }
+    if directory && !metadata.is_dir() {
+        bail!("admission path is not a directory");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn is_reparse(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn is_single_link(path: &Path) -> Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let file = fs::File::open(path).context("cannot open admission file to query link count")?;
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: file owns a live Windows handle and information is writable.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("cannot query admission file link count");
+    }
+    Ok(information.nNumberOfLinks == 1)
+}
+
+#[cfg(unix)]
+fn is_single_link(path: &Path) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(fs::symlink_metadata(path)?.nlink() == 1)
+}
+
+#[cfg(not(any(windows, unix)))]
+fn is_single_link(_path: &Path) -> Result<bool> {
+    Ok(true)
 }
 
 pub fn load_verified(
@@ -320,7 +898,9 @@ pub fn validate_bound_ref(
             }
             let record = load_verified(workspace, &reference.admission_id)?;
             if record.record_digest != reference.record_digest {
-                bail!("Python execution admission digest does not match the caller-retained digest");
+                bail!(
+                    "Python execution admission digest does not match the caller-retained digest"
+                );
             }
             if record.payload.tool_ref.manifest_id != tool_manifest_id
                 || record.payload.operation != operation
@@ -395,8 +975,10 @@ mod tests {
     use super::*;
     use crate::data_contract_validation::{
         parse_python_runtime_execution_admission, parse_python_runtime_execution_admission_record,
+        parse_python_runtime_qualification,
     };
     use serde_json::{Value, json};
+    use std::io::{Cursor, Write};
 
     const ADMISSION_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/python-runtime-execution-admission-v1.example.json");
@@ -428,16 +1010,24 @@ mod tests {
     fn residual_containment_cannot_be_marked_satisfied() {
         let mut payload = example_payload();
         payload.checks[1].state = PythonAdmissionCheckState::Satisfied;
-        payload.admission_state.blocker_codes.retain(|code| code != "os_network_egress_denial");
-        assert!(validate_payload(&payload).unwrap_err().to_string().contains(
-            "cannot mark residual containment check os_network_egress_denial satisfied"
-        ));
+        payload
+            .admission_state
+            .blocker_codes
+            .retain(|code| code != "os_network_egress_denial");
+        assert!(
+            validate_payload(&payload)
+                .unwrap_err()
+                .to_string()
+                .contains(
+                    "cannot mark residual containment check os_network_egress_denial satisfied"
+                )
+        );
     }
 
     #[test]
     fn digest_mismatch_and_payload_tamper_fail_closed() {
-        let record = parse_python_runtime_execution_admission_record(ADMISSION_RECORD_EXAMPLE)
-            .unwrap();
+        let record =
+            parse_python_runtime_execution_admission_record(ADMISSION_RECORD_EXAMPLE).unwrap();
         let mut value = serde_json::to_value(&record).unwrap();
         value["record_digest"] = json!("00".repeat(32));
         assert!(
@@ -456,9 +1046,8 @@ mod tests {
 
     #[test]
     fn incomplete_inventory_payload_is_not_an_admission() {
-        let inventory = include_bytes!(
-            "../contracts/examples/python-runtime-qualification-v1.example.json"
-        );
+        let inventory =
+            include_bytes!("../contracts/examples/python-runtime-qualification-v1.example.json");
         assert!(parse_python_runtime_execution_admission(inventory).is_err());
         assert!(
             reject_inventory_as_admission("qualification_00000000000000000000000000000000")
@@ -480,8 +1069,8 @@ mod tests {
 
     #[test]
     fn example_typed_digest_matches_record() {
-        let record = parse_python_runtime_execution_admission_record(ADMISSION_RECORD_EXAMPLE)
-            .unwrap();
+        let record =
+            parse_python_runtime_execution_admission_record(ADMISSION_RECORD_EXAMPLE).unwrap();
         assert_eq!(
             record.record_digest,
             workspace::digest_serialized(&record.payload).unwrap()
@@ -538,5 +1127,446 @@ mod tests {
             .is_err()
         );
         assert!(list_verified(&workspace).unwrap().is_empty());
+    }
+
+    fn write_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
+        use zip::write::SimpleFileOptions;
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            for (name, bytes) in files {
+                writer
+                    .start_file(
+                        *name,
+                        SimpleFileOptions::default()
+                            .compression_method(zip::CompressionMethod::Deflated),
+                    )
+                    .unwrap();
+                writer.write_all(bytes).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    fn closed_wheel(payload: &[u8]) -> (Vec<u8>, String) {
+        let record = format!(
+            "pkg/__init__.py,{},{}\n",
+            record_hash(payload),
+            payload.len()
+        );
+        let wheel = write_zip(&[
+            ("pkg/__init__.py", payload),
+            ("pkg-1.0.dist-info/RECORD", record.as_bytes()),
+        ]);
+        (wheel, record)
+    }
+
+    #[test]
+    fn cpython_archive_requires_launcher_and_stdlib_zip() {
+        let good = write_zip(&[("python.exe", b"launcher"), ("python313.zip", b"stdlib")]);
+        assert!(is_stdlib_zip_name("python313.zip"));
+        assert!(is_stdlib_zip_name("python310.zip"));
+        assert!(!is_stdlib_zip_name("python3.zip"));
+        assert!(!is_stdlib_zip_name("python3133.zip"));
+        assert!(!is_stdlib_zip_name("Python313.zip"));
+        assert_eq!(
+            prove_cpython_archive(&good, "python.exe").unwrap(),
+            "python313.zip"
+        );
+        let missing_stdlib = write_zip(&[("python.exe", b"launcher")]);
+        assert!(prove_cpython_archive(&missing_stdlib, "python.exe").is_err());
+        let extra_exe = write_zip(&[
+            ("python.exe", b"launcher"),
+            ("python313.zip", b"stdlib"),
+            ("cmd.exe", b"nope"),
+        ]);
+        assert!(prove_cpython_archive(&extra_exe, "python.exe").is_err());
+        assert!(prove_cpython_archive(b"not a zip", "python.exe").is_err());
+        let traversal = write_zip(&[("../python.exe", b"launcher"), ("python313.zip", b"stdlib")]);
+        assert!(prove_cpython_archive(&traversal, "python.exe").is_err());
+        let collision = write_zip(&[
+            ("python.exe", b"launcher"),
+            ("Python.exe", b"other"),
+            ("python313.zip", b"stdlib"),
+        ]);
+        assert!(prove_cpython_archive(&collision, "python.exe").is_err());
+    }
+
+    #[test]
+    fn path_configuration_rejects_site_and_sitecustomize() {
+        prove_path_configuration("python313.zip\nsite\n", Some("python313.zip")).unwrap();
+        prove_path_configuration("python313.zip\n.\n", Some("python313.zip")).unwrap();
+        assert!(
+            prove_path_configuration("python313.zip\nimport site\n", Some("python313.zip"))
+                .is_err()
+        );
+        assert!(
+            prove_path_configuration("python313.zip\nsitecustomize\n", Some("python313.zip"))
+                .is_err()
+        );
+        assert!(
+            prove_path_configuration(
+                "python313.zip\nC:/Users/me/AppData/Roaming/Python\n",
+                Some("python313.zip")
+            )
+            .is_err()
+        );
+        assert!(prove_path_configuration("site\n", Some("python313.zip")).is_err());
+    }
+
+    #[test]
+    fn wheel_record_closure_matches_members_and_rejects_tamper() {
+        let payload = b"print('ok')\n";
+        let (wheel, record) = closed_wheel(payload);
+        assert!(prove_wheel_record_bytes(&wheel, record.as_bytes()).is_ok());
+        let mut tampered = record.clone();
+        tampered.push_str("extra.py,sha256=abcd,1\n");
+        assert!(prove_wheel_record_bytes(&wheel, tampered.as_bytes()).is_err());
+        let mismatch = record.replace(
+            &record_hash(payload),
+            "sha256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        );
+        assert!(prove_wheel_record_bytes(&wheel, mismatch.as_bytes()).is_err());
+        let extra_member = write_zip(&[
+            ("pkg/__init__.py", payload),
+            ("extra.py", b"nope"),
+            ("pkg-1.0.dist-info/RECORD", record.as_bytes()),
+        ]);
+        assert!(prove_wheel_record_bytes(&extra_member, record.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn launch_harness_requires_fixed_contract_and_embedded_wrapper_bytes() {
+        let inventory = parse_python_runtime_qualification(include_bytes!(
+            "../contracts/examples/python-runtime-qualification-v1.example.json"
+        ))
+        .unwrap();
+        prove_launch_harness(&inventory, python_qualifications::WRAPPER_BYTES).unwrap();
+        assert!(prove_launch_harness(&inventory, b"tampered-wrapper").is_err());
+        let mut swapped = inventory.clone();
+        swapped.runtime_inputs.wrapper.artifact.digest.value = "00".repeat(32);
+        assert!(prove_launch_harness(&swapped, python_qualifications::WRAPPER_BYTES).is_err());
+        let mut drifted = inventory;
+        drifted.launch_contract.fixed_arguments = vec!["-I".to_owned()];
+        assert!(prove_launch_harness(&drifted, python_qualifications::WRAPPER_BYTES).is_err());
+    }
+
+    fn prove_wheel_record_bytes(wheel: &[u8], installed: &[u8]) -> Result<()> {
+        let dummy = dummy_record(wheel);
+        let installed_record = dummy_record(installed);
+        prove_wheel_record_closure(&[(
+            (dummy, wheel.to_vec()),
+            (installed_record, installed.to_vec()),
+        )])
+    }
+
+    fn dummy_descriptor() -> crate::contracts::ArtifactDescriptor {
+        crate::contracts::ArtifactDescriptor {
+            artifact_id: "artifact_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            roles: vec!["fixture".to_owned()],
+            media_type: "application/octet-stream".to_owned(),
+            byte_length: 1,
+            digest: crate::contracts::Digest {
+                algorithm: "sha256".to_owned(),
+                value: "11".repeat(32),
+            },
+            storage: crate::contracts::ArtifactStorage {
+                uri: "cas:sha256:11".to_owned(),
+            },
+            origin: "native_file".to_owned(),
+            capture: crate::contracts::ArtifactCapture {
+                mode: "byte_for_byte_copy".to_owned(),
+            },
+            transforms: Vec::new(),
+        }
+    }
+
+    fn dummy_record(bytes: &[u8]) -> crate::contracts::ArtifactRecord {
+        let mut descriptor = dummy_descriptor();
+        descriptor.digest.value = hex::encode(Sha256::digest(bytes));
+        descriptor.byte_length = bytes.len() as u64;
+        crate::contracts::ArtifactRecord {
+            schema_version: "artifact_record/v1".to_owned(),
+            record_digest: "22".repeat(32),
+            artifact: descriptor,
+        }
+    }
+
+    #[test]
+    fn private_materialization_copies_exact_bytes_and_cleans_up() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = Workspace::init(temporary.path()).unwrap();
+        let source = temporary.path().join("payload.bin");
+        fs::write(&source, b"exact-copy").unwrap();
+        let imported = workspace
+            .import_artifact(
+                &source,
+                vec!["fixture".to_owned()],
+                "application/octet-stream".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        let record = workspace.load_artifact(&imported.artifact_id).unwrap();
+        let root = workspace
+            .state
+            .join("tmp")
+            .join("admission-materialization-test");
+        fs::create_dir(&root).unwrap();
+        let dest = root.join("copy.bin");
+        copy_verified_create_new(&workspace, &record, &dest).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"exact-copy");
+        assert!(is_single_link(&dest).unwrap());
+        let alias = root.join("hardlink.bin");
+        fs::hard_link(&dest, &alias).unwrap();
+        assert!(!is_single_link(&dest).unwrap());
+        fs::remove_file(&alias).unwrap();
+        assert!(is_single_link(&dest).unwrap());
+        fs::remove_dir_all(&root).unwrap();
+        assert!(!root.exists());
+    }
+
+    #[cfg(windows)]
+    fn closed_embed_admission() -> (
+        tempfile::TempDir,
+        Workspace,
+        PythonRuntimeExecutionAdmissionRecord,
+    ) {
+        use crate::contracts::RuntimeCapsule;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = Workspace::init(temporary.path()).unwrap();
+        let payload = b"print('phaseledger')\n";
+        let (wheel, record) = closed_wheel(payload);
+        let archive = write_zip(&[
+            ("python.exe", b"embed-launcher"),
+            ("python313.zip", b"stdlib-bytes"),
+        ]);
+        let path_configuration = b"python313.zip\nsite\n";
+        let launcher = b"embed-launcher";
+
+        let evidence_path = temporary.path().join("descriptor-claim.json");
+        fs::write(&evidence_path, br#"{"descriptor_claim":"ready"}"#).unwrap();
+        let evidence = workspace
+            .import_artifact(
+                &evidence_path,
+                vec!["qualification_evidence".to_owned()],
+                "application/json".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+
+        let capsule_root = temporary.path().join("python-capsule-root");
+        fs::create_dir_all(capsule_root.join("site/phaseledger-0.6.0.dist-info")).unwrap();
+        fs::write(capsule_root.join("python.exe"), launcher).unwrap();
+        fs::write(capsule_root.join("python313._pth"), path_configuration).unwrap();
+        fs::write(
+            capsule_root.join("site/phaseledger-0.6.0.dist-info/RECORD"),
+            record.as_bytes(),
+        )
+        .unwrap();
+
+        let capsule_id = "capsule_41414141414141414141414141414141";
+        let mut descriptor = json!({
+            "schema_version": "runtime-capsule/v1",
+            "capsule_id": capsule_id,
+            "platform": {"os":"windows","arch":"x86_64","abi":"cp313-win_amd64"},
+            "launcher": {
+                "kind": "interpreter",
+                "path": "python.exe",
+                "byte_length": launcher.len(),
+                "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(launcher))}
+            },
+            "supporting_files": [
+                {
+                    "path": "python313._pth",
+                    "role": "path_configuration",
+                    "byte_length": path_configuration.len(),
+                    "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(path_configuration))}
+                },
+                {
+                    "path": "site/phaseledger-0.6.0.dist-info/RECORD",
+                    "role": "installed_record",
+                    "byte_length": record.len(),
+                    "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(record.as_bytes()))}
+                }
+            ],
+            "transitive_closure": {
+                "state": "complete",
+                "inventory_digest": {"algorithm":"sha256","value":"00".repeat(32)},
+                "declared_file_count": 2,
+                "inventoried_file_count": 2,
+                "missing_paths": []
+            },
+            "external_platform_assumptions": [],
+            "operation_scope": {
+                "tool_manifest_id": "phaseledger",
+                "operations": ["phaseledger_measure"]
+            },
+            "qualification_evidence": [{
+                "kind": "qualification_run",
+                "artifact_id": evidence.artifact_id,
+                "digest": evidence.digest,
+                "observed_at": "2026-08-16T00:00:00Z",
+                "scope": "descriptor-only readiness claim"
+            }],
+            "readiness": {"state":"ready","blocker_codes":[]},
+            "authority_effect": "none"
+        });
+        let parsed: RuntimeCapsule = serde_json::from_value(descriptor.clone()).unwrap();
+        descriptor["transitive_closure"]["inventory_digest"]["value"] =
+            json!(workspace::digest_serialized(&parsed.supporting_files).unwrap());
+        let descriptor_path = temporary.path().join("python-runtime-capsule.json");
+        fs::write(
+            &descriptor_path,
+            serde_json::to_vec_pretty(&descriptor).unwrap(),
+        )
+        .unwrap();
+        runtime_capsules::admit(&workspace, &descriptor_path, &capsule_root).unwrap();
+
+        let archive_path = temporary.path().join("python-embed.zip");
+        fs::write(&archive_path, &archive).unwrap();
+        let archive_artifact = workspace
+            .import_artifact(
+                &archive_path,
+                vec!["runtime_input".to_owned()],
+                "application/zip".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+        let wheel_path = temporary.path().join("phaseledger.whl");
+        fs::write(&wheel_path, &wheel).unwrap();
+        let wheel_artifact = workspace
+            .import_artifact(
+                &wheel_path,
+                vec!["runtime_input".to_owned()],
+                "application/zip".to_owned(),
+                "native_file",
+                "byte_for_byte_copy",
+            )
+            .unwrap();
+
+        let inventory = python_qualifications::create(
+            &workspace,
+            capsule_id,
+            &archive_artifact.artifact_id,
+            "python313._pth",
+            &[wheel_artifact.artifact_id],
+            &["site/phaseledger-0.6.0.dist-info/RECORD".to_owned()],
+        )
+        .unwrap();
+        let admission = admit(&workspace, &inventory.qualification_id).unwrap();
+        (temporary, workspace, admission)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closed_embed_satisfies_implementable_proofs_but_stays_not_granted() {
+        let (_temporary, workspace, admission) = closed_embed_admission();
+        assert_eq!(
+            admission.payload.admission_state.state,
+            PythonAdmissionStateValue::NotGranted
+        );
+        assert_eq!(
+            admission.payload.authority_effect,
+            ContractAuthorityEffect::None
+        );
+        let check = |code: &str| {
+            admission
+                .payload
+                .checks
+                .iter()
+                .find(|check| check.code == code)
+                .unwrap()
+                .state
+                .clone()
+        };
+        assert_eq!(
+            check("cpython_archive_semantics"),
+            PythonAdmissionCheckState::Satisfied
+        );
+        assert_eq!(
+            check("wheel_record_closure"),
+            PythonAdmissionCheckState::Satisfied
+        );
+        assert_eq!(
+            check("python_launch_harness"),
+            PythonAdmissionCheckState::Satisfied
+        );
+        assert_eq!(
+            check("python_path_configuration_isolation"),
+            PythonAdmissionCheckState::Satisfied
+        );
+        assert_eq!(
+            check("python_private_materialization"),
+            PythonAdmissionCheckState::Satisfied
+        );
+        assert_eq!(
+            check("os_network_egress_denial"),
+            PythonAdmissionCheckState::NotImplemented
+        );
+        assert_eq!(
+            check("python_active_process_limit_one"),
+            PythonAdmissionCheckState::NotImplemented
+        );
+        assert_eq!(
+            check("python_creation_time_job_assignment"),
+            PythonAdmissionCheckState::NotImplemented
+        );
+        assert_eq!(
+            admission.payload.admission_state.blocker_codes,
+            vec![
+                "os_network_egress_denial".to_owned(),
+                "python_active_process_limit_one".to_owned(),
+                "python_creation_time_job_assignment".to_owned(),
+            ]
+        );
+        for directory in ["plans", "runs", "executions"] {
+            assert_eq!(
+                fs::read_dir(workspace.state.join(directory))
+                    .unwrap()
+                    .count(),
+                0
+            );
+        }
+        let leftovers = fs::read_dir(workspace.state.join("tmp"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("admission-")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+        let pin = crate::upstream_pins::get_for_tool("phaseledger").unwrap();
+        assert_eq!(
+            pin.pin.execution_readiness.state,
+            crate::upstream_pins::ReadinessState::FailClosed
+        );
+        assert!(crate::upstream_pins::require_ready_for_planning("phaseledger").is_err());
+        assert!(
+            !crate::manifests::get("phaseledger")
+                .unwrap()
+                .manifest
+                .enabled_by_default
+        );
+        let trust_meter = crate::upstream_pins::get_for_tool("trust-meter").unwrap();
+        assert_eq!(
+            trust_meter.pin.execution_readiness.state,
+            crate::upstream_pins::ReadinessState::FailClosed
+        );
+        assert!(
+            trust_meter
+                .pin
+                .execution_readiness
+                .blocker_codes
+                .iter()
+                .any(|code| code == "ambient_ancestor_config_not_isolated")
+        );
     }
 }
