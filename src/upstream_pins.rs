@@ -647,6 +647,132 @@ mod tests {
     }
 
     #[test]
+    fn trust_meter_embedded_pin_binds_published_release_without_enabling_execution() {
+        let trusted = get_for_tool("trust-meter").unwrap();
+        assert!(!trusted.raw.as_bytes().contains(&b'\r'));
+        assert_eq!(
+            trusted.sha256,
+            "6cfed60b3db3491931559eb99cb6e887e0e195f3b21938c63d2d4a9d7c94aa25"
+        );
+        assert_eq!(
+            trusted.pin.source.commit_sha,
+            "7334632e43864adad62951fcbb0df90fa9580672"
+        );
+        assert_eq!(
+            trusted.pin.source.tree_sha,
+            "a22d5850f621ed29cd496cde651cb74bd3f2580f"
+        );
+        assert_eq!(trusted.pin.software_version, "0.2.1");
+
+        let release = trusted.pin.release.as_ref().expect("published release");
+        assert_eq!(release.channel, ReleaseChannel::GithubRelease);
+        assert_eq!(release.version, trusted.pin.software_version);
+        assert_eq!(release.tag, "v0.2.1");
+        assert_eq!(release.release_id.as_deref(), Some("371236195"));
+        assert_eq!(release.subject_commit_sha, trusted.pin.source.commit_sha);
+        assert_eq!(release.subject_tree_sha, trusted.pin.source.tree_sha);
+
+        let workflows = [
+            ("31928721728", "Trust Meter CI"),
+            ("31928916482", "Trust Meter GitHub Release"),
+            ("31928996010", "Trust Meter GitHub Release"),
+        ];
+        let assets = [
+            (
+                "516474966",
+                "trust_meter-0.2.1-py3-none-any.whl",
+                "a653b3010896dd8a034dd4bc77b1925ca56680d51a8834cc7aa8ed320f8f7f2d",
+                59_831,
+            ),
+            (
+                "516474985",
+                "trust_meter-0.2.1.tar.gz",
+                "5178913bd59793223f6a304f837016ff92f8a7deda16c43114bd6e4462d6c6bd",
+                49_013,
+            ),
+            (
+                "516475002",
+                "trust-meter-measure-v1.schema.json",
+                "a3d2e9811b1c6ba6309921d1762755a29b99df40fa6226b14241a33586375f40",
+                6_757,
+            ),
+            (
+                "516475031",
+                "SHA256SUMS.txt",
+                "7f6a1266510fc5713d731c171168965ade18d7e52d9e4d63b7612c0fd8448a01",
+                293,
+            ),
+        ];
+        assert_eq!(trusted.pin.evidence.len(), workflows.len() + assets.len());
+        for (evidence, (id, name)) in trusted.pin.evidence[..workflows.len()]
+            .iter()
+            .zip(workflows)
+        {
+            assert_eq!(evidence.kind, EvidenceKind::WorkflowRun);
+            assert_eq!(evidence.id, id);
+            assert_eq!(evidence.name, name);
+            assert_eq!(evidence.sha256, None);
+            assert_eq!(evidence.size_bytes, None);
+            assert_eq!(evidence.status, EvidenceStatus::Success);
+        }
+        for (evidence, (id, name, sha256, size_bytes)) in
+            trusted.pin.evidence[workflows.len()..].iter().zip(assets)
+        {
+            assert_eq!(evidence.kind, EvidenceKind::ReleaseAsset);
+            assert_eq!(evidence.id, id);
+            assert_eq!(evidence.name, name);
+            assert_eq!(evidence.sha256.as_deref(), Some(sha256));
+            assert_eq!(evidence.size_bytes, Some(size_bytes));
+            assert_eq!(evidence.status, EvidenceStatus::Published);
+        }
+        for evidence in &trusted.pin.evidence {
+            assert_eq!(evidence.subject_commit_sha, trusted.pin.source.commit_sha);
+            assert_eq!(evidence.expires_at, None);
+        }
+
+        assert_eq!(trusted.pin.runtime.kind, RuntimeKind::Python);
+        assert_eq!(
+            trusted.pin.runtime.version_constraint.as_deref(),
+            Some(">=3.11")
+        );
+        assert!(!trusted.pin.runtime.interpreter_included);
+        assert!(!trusted.pin.runtime.transitive_dependencies_included);
+        assert!(!trusted.pin.runtime.self_contained);
+        assert!(trusted.pin.runtime.external_tools.is_empty());
+        assert_eq!(
+            trusted.pin.native_posture.status,
+            NativeStatus::SourceVerifiedAdvisoryMeasure
+        );
+        assert_eq!(trusted.pin.native_posture.release_eligible, None);
+        assert_eq!(
+            trusted.pin.execution_readiness.state,
+            ReadinessState::FailClosed
+        );
+        assert_eq!(trusted.pin.execution_readiness.scope, "advisory_measure");
+        assert_eq!(
+            trusted.pin.execution_readiness.blocker_codes,
+            [
+                "ambient_ancestor_config_not_isolated",
+                "python_interpreter_not_included",
+                "python_runtime_snapshot_unimplemented",
+            ]
+        );
+        assert_eq!(
+            trusted.pin.admission.evidence_integrity_state,
+            EvidenceIntegrityState::PublishedChecksumsVerified
+        );
+        assert_eq!(
+            trusted.pin.admission.authority_effect,
+            AuthorityEffect::None
+        );
+        assert_eq!(trusted.pin.license_spdx, "MIT");
+
+        let manifest = manifests::get("trust-meter").expect("trusted manifest");
+        assert!(!manifest.manifest.enabled_by_default);
+        assert_eq!(manifest.manifest.authority_contract.mode, "not_reported");
+    }
+
+    #[test]
     fn unknown_fields_and_authority_laundering_are_rejected() {
         let trusted = get_for_tool("unasked").unwrap();
         let mut unknown: Value = serde_json::from_str(trusted.raw).unwrap();

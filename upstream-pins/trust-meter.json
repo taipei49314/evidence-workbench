@@ -1,10 +1,119 @@
 {
-  "schema_version":"upstream_pin/v1","tool_manifest_id":"trust-meter","repository_url":"https://github.com/taipei49314/trust-meter",
-  "source":{"default_branch":"master","commit_sha":"353b2aa81548d14ad394fe46d548e93c8c39a842","tree_sha":"ce0e076bdf6ad02d3c0a69b1c6e1afc6e5d0a79e"},
-  "software_version":"0.1.0","release":null,
-  "evidence":[{"kind":"workflow_run","id":"31479387726","name":"Trust Meter CI","subject_commit_sha":"353b2aa81548d14ad394fe46d548e93c8c39a842","sha256":null,"size_bytes":null,"status":"success","expires_at":null}],
-  "runtime":{"kind":"python","target_os":"any","target_arch":"any","version_constraint":">=3.9","interpreter_included":false,"transitive_dependencies_included":false,"self_contained":false,"external_tools":[]},
-  "native_posture":{"status":"SOURCE_VERIFIED_ADVISORY_MEASURE","release_eligible":null},
-  "execution_readiness":{"state":"fail_closed","scope":"advisory_measure","blocker_codes":["ambient_ancestor_config_not_isolated","license_file_missing","python_interpreter_not_included","python_runtime_snapshot_unimplemented"]},
-  "admission":{"evidence_integrity_state":"source_verified","authority_effect":"none"},"license_spdx":"NOASSERTION"
+  "schema_version": "upstream_pin/v1",
+  "tool_manifest_id": "trust-meter",
+  "repository_url": "https://github.com/taipei49314/trust-meter",
+  "source": {
+    "default_branch": "master",
+    "commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+    "tree_sha": "a22d5850f621ed29cd496cde651cb74bd3f2580f"
+  },
+  "software_version": "0.2.1",
+  "release": {
+    "channel": "github_release",
+    "version": "0.2.1",
+    "tag": "v0.2.1",
+    "release_id": "371236195",
+    "subject_commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+    "subject_tree_sha": "a22d5850f621ed29cd496cde651cb74bd3f2580f"
+  },
+  "evidence": [
+    {
+      "kind": "workflow_run",
+      "id": "31928721728",
+      "name": "Trust Meter CI",
+      "subject_commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+      "sha256": null,
+      "size_bytes": null,
+      "status": "success",
+      "expires_at": null
+    },
+    {
+      "kind": "workflow_run",
+      "id": "31928916482",
+      "name": "Trust Meter GitHub Release",
+      "subject_commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+      "sha256": null,
+      "size_bytes": null,
+      "status": "success",
+      "expires_at": null
+    },
+    {
+      "kind": "workflow_run",
+      "id": "31928996010",
+      "name": "Trust Meter GitHub Release",
+      "subject_commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+      "sha256": null,
+      "size_bytes": null,
+      "status": "success",
+      "expires_at": null
+    },
+    {
+      "kind": "release_asset",
+      "id": "516474966",
+      "name": "trust_meter-0.2.1-py3-none-any.whl",
+      "subject_commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+      "sha256": "a653b3010896dd8a034dd4bc77b1925ca56680d51a8834cc7aa8ed320f8f7f2d",
+      "size_bytes": 59831,
+      "status": "published",
+      "expires_at": null
+    },
+    {
+      "kind": "release_asset",
+      "id": "516474985",
+      "name": "trust_meter-0.2.1.tar.gz",
+      "subject_commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+      "sha256": "5178913bd59793223f6a304f837016ff92f8a7deda16c43114bd6e4462d6c6bd",
+      "size_bytes": 49013,
+      "status": "published",
+      "expires_at": null
+    },
+    {
+      "kind": "release_asset",
+      "id": "516475002",
+      "name": "trust-meter-measure-v1.schema.json",
+      "subject_commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+      "sha256": "a3d2e9811b1c6ba6309921d1762755a29b99df40fa6226b14241a33586375f40",
+      "size_bytes": 6757,
+      "status": "published",
+      "expires_at": null
+    },
+    {
+      "kind": "release_asset",
+      "id": "516475031",
+      "name": "SHA256SUMS.txt",
+      "subject_commit_sha": "7334632e43864adad62951fcbb0df90fa9580672",
+      "sha256": "7f6a1266510fc5713d731c171168965ade18d7e52d9e4d63b7612c0fd8448a01",
+      "size_bytes": 293,
+      "status": "published",
+      "expires_at": null
+    }
+  ],
+  "runtime": {
+    "kind": "python",
+    "target_os": "any",
+    "target_arch": "any",
+    "version_constraint": ">=3.11",
+    "interpreter_included": false,
+    "transitive_dependencies_included": false,
+    "self_contained": false,
+    "external_tools": []
+  },
+  "native_posture": {
+    "status": "SOURCE_VERIFIED_ADVISORY_MEASURE",
+    "release_eligible": null
+  },
+  "execution_readiness": {
+    "state": "fail_closed",
+    "scope": "advisory_measure",
+    "blocker_codes": [
+      "ambient_ancestor_config_not_isolated",
+      "python_interpreter_not_included",
+      "python_runtime_snapshot_unimplemented"
+    ]
+  },
+  "admission": {
+    "evidence_integrity_state": "published_checksums_verified",
+    "authority_effect": "none"
+  },
+  "license_spdx": "MIT"
 }
