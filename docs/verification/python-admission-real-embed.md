@@ -4,8 +4,9 @@ This is an operator procedure. EWB does not vendor the official embed zip,
 does not download it from an adapter, and does not spawn `python.exe`.
 
 A satisfied implementable check is not execution admission. Residual
-containment stays `not_implemented`. Trust Meter and Phaseledger stay
-`fail_closed` and `enabled_by_default: false`.
+containment is recorded as `failed` because spawnless admit cannot prove
+OS containment of `python.exe`; those checks still cannot be `satisfied`.
+Trust Meter and Phaseledger stay `fail_closed` and `enabled_by_default: false`.
 
 ## Pinned official embed
 
@@ -104,9 +105,9 @@ wheel_record_closure                satisfied
 python_path_configuration_isolation satisfied
 python_launch_harness               satisfied
 python_private_materialization      satisfied
-os_network_egress_denial            not_implemented
-python_active_process_limit_one     not_implemented
-python_creation_time_job_assignment not_implemented
+os_network_egress_denial            failed
+python_active_process_limit_one     failed
+python_creation_time_job_assignment failed
 admission_state                     not_granted
 ```
 
