@@ -235,6 +235,14 @@ ewb --json --workspace C:\evidence-workspace python-admissions verify `
   $admission.data.admission_id
 ```
 
+An official CPython Windows embed zip can be supplied by the operator and
+admitted the same way. EWB does not vendor or download that zip. The stock
+`python313._pth` must be replaced with the isolated grammar before admit;
+comments and `#import site` fail closed. Five implementable checks may then
+be `satisfied` while admission stays `not_granted` and the Trust Meter /
+Phaseledger pins stay `fail_closed`. See
+[`docs/verification/python-admission-real-embed.md`](docs/verification/python-admission-real-embed.md).
+
 ### Untrusted GitHub discovery handoff
 
 `github-radar` discovery remains outside EWB's trusted execution plane. First

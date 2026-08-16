@@ -1891,6 +1891,378 @@ fn python_admission_cli_satisfies_implementable_proofs_but_stays_not_granted() {
     }
 }
 
+#[cfg(windows)]
+const OFFICIAL_CPYTHON_EMBED_AMD64_NAME: &str = "python-3.13.15-embed-amd64.zip";
+#[cfg(windows)]
+const OFFICIAL_CPYTHON_EMBED_AMD64_SHA256: &str =
+    "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf";
+
+#[cfg(windows)]
+fn official_embed_and_phaseledger_wheel() -> Option<(Vec<u8>, Vec<u8>)> {
+    let embed_path = std::env::var("EWB_CPYTHON_EMBED_ZIP").ok()?;
+    let wheel_path = std::env::var("EWB_PHASELEDGER_WHEEL").ok()?;
+    if embed_path.is_empty() || wheel_path.is_empty() {
+        return None;
+    }
+    Some((
+        fs::read(&embed_path).unwrap_or_else(|error| {
+            panic!("cannot read EWB_CPYTHON_EMBED_ZIP ({embed_path}): {error}")
+        }),
+        fs::read(&wheel_path).unwrap_or_else(|error| {
+            panic!("cannot read EWB_PHASELEDGER_WHEEL ({wheel_path}): {error}")
+        }),
+    ))
+}
+
+#[cfg(windows)]
+fn zip_file_member(bytes: &[u8], name: &str) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut entry = archive.by_name(name).unwrap();
+    let mut member = Vec::new();
+    std::io::Read::read_to_end(&mut entry, &mut member).unwrap();
+    member
+}
+
+#[cfg(windows)]
+fn unpack_wheel_into_site(wheel: &[u8], site: &Path) -> String {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(wheel)).unwrap();
+    let mut record = None;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        if entry.is_dir() {
+            continue;
+        }
+        let enclosed = entry
+            .enclosed_name()
+            .expect("wheel member must not traverse")
+            .to_owned();
+        let destination = site.join(&enclosed);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let mut output = fs::File::create(&destination).unwrap();
+        std::io::copy(&mut entry, &mut output).unwrap();
+        let relative = format!("site/{}", enclosed.to_string_lossy().replace('\\', "/"));
+        if relative.ends_with(".dist-info/RECORD") {
+            assert!(
+                record.replace(relative).is_none(),
+                "wheel contains more than one .dist-info/RECORD"
+            );
+        }
+    }
+    record.expect("wheel is missing a .dist-info/RECORD")
+}
+
+#[cfg(windows)]
+fn capsule_supporting_files(root: &Path) -> Vec<(String, u64, String)> {
+    fn walk(root: &Path, directory: &Path, files: &mut Vec<(String, u64, String)>) {
+        let mut entries = fs::read_dir(directory).unwrap().collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.as_ref().unwrap().file_name());
+        for entry in entries {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            if metadata.is_dir() {
+                walk(root, &path, files);
+                continue;
+            }
+            let relative = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative == "python.exe" {
+                continue;
+            }
+            let bytes = fs::read(&path).unwrap();
+            files.push((
+                relative,
+                bytes.len() as u64,
+                hex::encode(Sha256::digest(&bytes)),
+            ));
+        }
+    }
+    let mut files = Vec::new();
+    walk(root, root, &mut files);
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
+#[cfg(windows)]
+#[test]
+fn python_admission_cli_accepts_official_embed_bytes_but_stays_not_granted() {
+    let Some((embed, wheel)) = official_embed_and_phaseledger_wheel() else {
+        eprintln!(
+            "skipping official embed admission: set EWB_CPYTHON_EMBED_ZIP and EWB_PHASELEDGER_WHEEL"
+        );
+        return;
+    };
+    assert_eq!(
+        hex::encode(Sha256::digest(&embed)),
+        OFFICIAL_CPYTHON_EMBED_AMD64_SHA256,
+        "{OFFICIAL_CPYTHON_EMBED_AMD64_NAME} digest must match the pinned official embed"
+    );
+    let launcher = zip_file_member(&embed, "python.exe");
+    let stock_pth = zip_file_member(&embed, "python313._pth");
+    let stock_text = String::from_utf8_lossy(&stock_pth);
+    assert!(
+        stock_text.contains("#import site") || stock_text.contains("import site"),
+        "official embed _pth should still carry the stock site comment"
+    );
+    let isolated_pth = b"python313.zip\nsite\n";
+
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let add_artifact = |name: &str, bytes: &[u8], role: &str| -> Value {
+        let path = temp.path().join(name);
+        fs::write(&path, bytes).unwrap();
+        let (code, value, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["artifacts", "add", "--file"])
+                .arg(&path)
+                .args(["--role", role]),
+        );
+        assert_eq!(code, 0, "{value:?} {stderr}");
+        value["data"].clone()
+    };
+    let archive_artifact = add_artifact(OFFICIAL_CPYTHON_EMBED_AMD64_NAME, &embed, "runtime_input");
+    let wheel_artifact = add_artifact("phaseledger.whl", &wheel, "runtime_input");
+    let evidence = add_artifact(
+        "descriptor-claim.json",
+        br#"{"descriptor_claim":"ready"}"#,
+        "qualification_evidence",
+    );
+
+    let build_root = |name: &str, pth: &[u8]| {
+        let root = temp.path().join(name);
+        fs::create_dir_all(root.join("site")).unwrap();
+        fs::write(root.join("python.exe"), &launcher).unwrap();
+        fs::write(root.join("python313._pth"), pth).unwrap();
+        let record_path = unpack_wheel_into_site(&wheel, &root.join("site"));
+        (root, record_path)
+    };
+    let admit_from_root = |capsule_id: &str, root: &Path, record_path: &str| -> Value {
+        let supporting = capsule_supporting_files(root);
+        let mut descriptor = json!({
+            "schema_version": "runtime-capsule/v1",
+            "capsule_id": capsule_id,
+            "platform": {"os":"windows","arch":"x86_64","abi":"cp313-win_amd64"},
+            "launcher": {
+                "kind": "interpreter",
+                "path": "python.exe",
+                "byte_length": launcher.len(),
+                "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(&launcher))}
+            },
+            "supporting_files": supporting.iter().map(|(path, length, digest)| {
+                json!({
+                    "path": path,
+                    "role": if path.ends_with("._pth") { "path_configuration" } else { "installed_record" },
+                    "byte_length": length,
+                    "digest": {"algorithm":"sha256","value": digest}
+                })
+            }).collect::<Vec<_>>(),
+            "transitive_closure": {
+                "state": "complete",
+                "inventory_digest": {"algorithm":"sha256","value":"00".repeat(32)},
+                "declared_file_count": supporting.len(),
+                "inventoried_file_count": supporting.len(),
+                "missing_paths": []
+            },
+            "external_platform_assumptions": [],
+            "operation_scope": {
+                "tool_manifest_id": "phaseledger",
+                "operations": ["phaseledger_measure"]
+            },
+            "qualification_evidence": [{
+                "kind": "qualification_run",
+                "artifact_id": evidence["artifact_id"],
+                "digest": evidence["digest"],
+                "observed_at": "2026-08-16T00:00:00Z",
+                "scope": "descriptor-only readiness claim"
+            }],
+            "readiness": {"state":"ready","blocker_codes":[]},
+            "authority_effect": "none"
+        });
+        let parsed: RuntimeCapsule = serde_json::from_value(descriptor.clone()).unwrap();
+        descriptor["transitive_closure"]["inventory_digest"]["value"] = Value::String(
+            digest_serialized(&parsed.supporting_files).expect("digest supporting inventory"),
+        );
+        let descriptor_path = root.parent().unwrap().join(format!("{capsule_id}.json"));
+        fs::write(
+            &descriptor_path,
+            serde_json::to_vec_pretty(&descriptor).unwrap(),
+        )
+        .unwrap();
+        let (code, admitted_capsule, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["capsules", "admit", "--descriptor"])
+                .arg(&descriptor_path)
+                .arg("--root")
+                .arg(root),
+        );
+        assert_eq!(code, 0, "{admitted_capsule:?} {stderr}");
+        let (code, created, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args([
+                    "python-qualifications",
+                    "create",
+                    "--capsule",
+                    capsule_id,
+                    "--cpython-archive-artifact",
+                    archive_artifact["artifact_id"].as_str().unwrap(),
+                    "--path-configuration",
+                    "python313._pth",
+                    "--wheel-artifact",
+                    wheel_artifact["artifact_id"].as_str().unwrap(),
+                    "--installed-record-path",
+                    record_path,
+                ]),
+        );
+        assert_eq!(code, 0, "{created:?} {stderr}");
+        let qualification_id = created["data"]["qualification_id"].as_str().unwrap();
+        let (code, admitted, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args([
+                    "python-admissions",
+                    "admit",
+                    "--inventory-qualification",
+                    qualification_id,
+                ]),
+        );
+        assert_eq!(code, 0, "{admitted:?} {stderr}");
+        admitted
+    };
+
+    let (stock_root, stock_record) = build_root("stock-pth-root", &stock_pth);
+    let stock = admit_from_root(
+        "capsule_43434343434343434343434343434343",
+        &stock_root,
+        &stock_record,
+    );
+    let stock_state = |code: &str| {
+        stock["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["code"] == code)
+            .unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(
+        stock["data"]["payload"]["admission_state"]["state"],
+        "not_granted"
+    );
+    assert_eq!(stock_state("python_path_configuration_isolation"), "failed");
+
+    let (isolated_root, isolated_record) = build_root("isolated-pth-root", isolated_pth);
+    let admitted = admit_from_root(
+        "capsule_44444444444444444444444444444444",
+        &isolated_root,
+        &isolated_record,
+    );
+    assert_eq!(
+        admitted["data"]["payload"]["admission_state"]["state"],
+        "not_granted"
+    );
+    let check_state = |code: &str| {
+        admitted["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["code"] == code)
+            .unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    for code in [
+        "cpython_archive_semantics",
+        "wheel_record_closure",
+        "python_launch_harness",
+        "python_path_configuration_isolation",
+        "python_private_materialization",
+    ] {
+        assert_eq!(check_state(code), "satisfied", "{code}");
+    }
+    for code in [
+        "os_network_egress_denial",
+        "python_active_process_limit_one",
+        "python_creation_time_job_assignment",
+    ] {
+        assert_eq!(check_state(code), "not_implemented", "{code}");
+    }
+    let admission_id = admitted["data"]["admission_id"].as_str().unwrap();
+    let plans_before = fs::read_dir(temp.path().join(".ewb/plans"))
+        .unwrap()
+        .count();
+    let (code, still_blocked, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--python-admission",
+                admission_id,
+                "--input-artifact",
+                archive_artifact["artifact_id"].as_str().unwrap(),
+            ]),
+    );
+    assert_eq!(code, 2, "{still_blocked:?} {stderr}");
+    assert!(
+        still_blocked["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("disabled")
+            || still_blocked["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("fail_closed"),
+        "{still_blocked:?}"
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/plans"))
+            .unwrap()
+            .count(),
+        plans_before
+    );
+    for tool in ["trust-meter", "phaseledger"] {
+        let (code, shown, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["tools", "show", tool]),
+        );
+        assert_eq!(code, 0, "{shown:?} {stderr}");
+        assert_eq!(shown["data"]["manifest"]["enabled_by_default"], false);
+        assert_eq!(
+            shown["data"]["upstream_pin"]["execution_readiness"]["state"],
+            "fail_closed"
+        );
+        if tool == "trust-meter" {
+            let blockers = shown["data"]["upstream_pin"]["execution_readiness"]["blocker_codes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|code| code.as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert!(blockers.contains(&"ambient_ancestor_config_not_isolated"));
+        }
+    }
+}
+
 #[test]
 fn capsules_snapshot_writes_fail_closed_descriptor_without_workspace() {
     let temp = TempDir::new().unwrap();
