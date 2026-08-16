@@ -260,6 +260,10 @@ Phaseledger pins stay `fail_closed`. The gated operator path may then run
 `prove-containment` and `prove-network` against the bound official
 `python.exe`; those records still cannot grant admission. See
 [`docs/verification/python-admission-real-embed.md`](docs/verification/python-admission-real-embed.md).
+An honest future runtime snapshot would have to bind the official embed
+digest, the isolated `_pth`, and each wheel/RECORD pair; the EWB prove
+root does not count. That snapshot is not implemented. See
+[`docs/verification/python-runtime-snapshot.md`](docs/verification/python-runtime-snapshot.md).
 
 ### Untrusted GitHub discovery handoff
 

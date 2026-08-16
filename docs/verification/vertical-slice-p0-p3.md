@@ -65,4 +65,6 @@ The production path is wired as exact transport and remains fail-closed:
 - `--input-artifact` does not scan `.ewb/handoffs`
 - no plan/run is written for Trust Meter or Phaseledger
 - pins were not marked `ready`
+- `python_runtime_snapshot_unimplemented` remains; the EWB prove root is
+  not that snapshot
 - P4/P5 (topology registry, scheduler, remaining tool wiring) were not started

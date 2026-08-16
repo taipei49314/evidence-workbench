@@ -154,6 +154,15 @@ v2 still cannot mark network denial satisfied. The only admission state is
 still `not_granted`. A Job Object, an empty PATH, or an AppContainer SID
 without the connect observation is not network denial. WFP is out of scope.
 
+An immutable Python runtime snapshot is not implemented.
+`python_runtime_qualification/v1` and `python_runtime_execution_admission/v1`
+through `/v3` are not that snapshot. A later snapshot would have to bind
+the official CPython embed archive digest, the admitted isolated `_pth`,
+and each wheel/RECORD pair by artifact ID, SHA-256, and length. The
+disposable EWB prove root is not that binding. This does not close
+`python_runtime_snapshot_unimplemented` or set pin `ready`. See
+[`docs/verification/python-runtime-snapshot.md`](verification/python-runtime-snapshot.md).
+
 `phaseledger-caller-observation/v1` is a caller-authored cite contract for a
 future Phaseledger 0.6.0 observation file. It requires a present exact artifact
 ID, matching SHA-256, a claim that names that ID/digest plus
@@ -185,7 +194,8 @@ or a registry record being present:
 8. Non-TomorrowCI tools stay `fail_closed` and `enabled_by_default: false`
    until an operation-scoped admission is granted and the exact pin blockers
    are actually closed. Residual containment blockers remain named; they are
-   not an OS sandbox.
+   not an OS sandbox. `python_runtime_snapshot_unimplemented` remains; the
+   prove root is not that snapshot.
 
 `ewb runs plan --input-artifact` remains a separate surface from
 `ewb handoffs`. A handoff ID is not an artifact ID. Planning does not scan

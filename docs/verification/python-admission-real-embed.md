@@ -165,3 +165,7 @@ Unset variables skip the test so Ubuntu CI stays green. A set variable with
 the wrong embed digest, a stock `_pth`, or a RECORD that does not close the
 wheel fails the test. When the variables are set, the test also runs
 `prove-containment` and `prove-network` against the official `python.exe`.
+
+The disposable prove root is not a runtime snapshot and does not set pin
+`interpreter_included`. See
+[`python-runtime-snapshot.md`](python-runtime-snapshot.md).
