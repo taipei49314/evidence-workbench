@@ -1,0 +1,58 @@
+{
+  "schema_version": "python_runtime_execution_admission_record/v2",
+  "admission_id": "admission_11111111111111111111111111111111",
+  "record_digest": "6a6dccde4abf297b167ccc82d936102d13435d641c32553fdfdff73e528c61fb",
+  "payload": {
+    "schema_version": "python_runtime_execution_admission/v2",
+    "observed_at": "2026-08-16T00:00:00Z",
+    "source_admission_ref": {
+      "admission_id": "admission_00000000000000000000000000000000",
+      "record_digest": "5af0efb9cdb9a172482e06fcff88a7b391a5559adc713380bc1e48e9025f10a8"
+    },
+    "inventory_qualification_ref": {
+      "qualification_id": "qualification_00000000000000000000000000000000",
+      "record_digest": "c01bd9655a446be562bd3a0b7a3347f1e157f89dba08d33701c1f3d074e24c4c"
+    },
+    "tool_ref": {
+      "manifest_id": "phaseledger",
+      "manifest_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "upstream_pin_ref": {
+      "tool_manifest_id": "phaseledger",
+      "pin_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "operation": "phaseledger_measure",
+    "recorder_identity": {
+      "version": "0.2.0",
+      "executable_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "platform_observation": {
+      "target": {
+        "os": "windows",
+        "arch": "x86_64",
+        "abi": "cp313-win_amd64"
+      },
+      "host": {
+        "os": "windows",
+        "arch": "x86_64"
+      }
+    },
+    "checks": [
+      { "code": "cpython_archive_semantics", "state": "satisfied", "evidence_refs": [] },
+      { "code": "os_network_egress_denial", "state": "failed", "evidence_refs": [] },
+      { "code": "python_active_process_limit_one", "state": "satisfied", "evidence_refs": [] },
+      { "code": "python_creation_time_job_assignment", "state": "satisfied", "evidence_refs": [] },
+      { "code": "python_launch_harness", "state": "satisfied", "evidence_refs": [] },
+      { "code": "python_path_configuration_isolation", "state": "satisfied", "evidence_refs": [] },
+      { "code": "python_private_materialization", "state": "satisfied", "evidence_refs": [] },
+      { "code": "wheel_record_closure", "state": "satisfied", "evidence_refs": [] }
+    ],
+    "admission_state": {
+      "state": "not_granted",
+      "blocker_codes": [
+        "os_network_egress_denial"
+      ]
+    },
+    "authority_effect": "none"
+  }
+}

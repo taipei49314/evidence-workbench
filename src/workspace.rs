@@ -660,7 +660,17 @@ impl Workspace {
             .join("python-admissions")
             .join(format!("{admission_id}.json"));
         let record: PythonRuntimeExecutionAdmissionRecord = read_strict_json(&path)?;
-        if record.schema_version != "python_runtime_execution_admission_record/v1"
+        let expected_record_schema = match record.payload.schema_version.as_str() {
+            "python_runtime_execution_admission/v1" => {
+                "python_runtime_execution_admission_record/v1"
+            }
+            "python_runtime_execution_admission/v2" => {
+                "python_runtime_execution_admission_record/v2"
+            }
+            _ => "",
+        };
+        if expected_record_schema.is_empty()
+            || record.schema_version != expected_record_schema
             || record.admission_id != admission_id
             || digest_serialized(&record.payload)? != record.record_digest
         {

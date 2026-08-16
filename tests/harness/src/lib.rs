@@ -23,6 +23,8 @@ pub mod native;
 pub mod native_qualifications;
 #[path = "../../../src/python_admissions.rs"]
 pub mod python_admissions;
+#[path = "../../../src/python_containment.rs"]
+pub mod python_containment;
 #[path = "../../../src/python_qualifications.rs"]
 pub mod python_qualifications;
 #[path = "../../../src/run_validation.rs"]

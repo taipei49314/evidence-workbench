@@ -65,7 +65,9 @@ pub fn parse_python_runtime_execution_admission_record(
 ) -> Result<PythonRuntimeExecutionAdmissionRecord> {
     let record: PythonRuntimeExecutionAdmissionRecord =
         parse_contract(bytes, "Python runtime execution admission record")?;
-    if record.schema_version != "python_runtime_execution_admission_record/v1" {
+    if record.schema_version != "python_runtime_execution_admission_record/v1"
+        && record.schema_version != "python_runtime_execution_admission_record/v2"
+    {
         bail!("unsupported Python runtime execution admission record schema");
     }
     validate_prefixed_id(&record.admission_id, "admission_", "Python execution admission id")?;
@@ -826,6 +828,12 @@ mod tests {
     const PYTHON_ADMISSION_RECORD_EXAMPLE: &[u8] = include_bytes!(
         "../contracts/examples/python-runtime-execution-admission-record-v1.example.json"
     );
+    const PYTHON_ADMISSION_V2_EXAMPLE: &[u8] = include_bytes!(
+        "../contracts/examples/python-runtime-execution-admission-v2.example.json"
+    );
+    const PYTHON_ADMISSION_RECORD_V2_EXAMPLE: &[u8] = include_bytes!(
+        "../contracts/examples/python-runtime-execution-admission-record-v2.example.json"
+    );
     const PHASELEDGER_CALLER_OBSERVATION_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/phaseledger-caller-observation-v1.example.json");
     const HANDOFF_EXAMPLE: &[u8] =
@@ -855,6 +863,10 @@ mod tests {
             .expect("valid not-granted Python execution admission example");
         parse_python_runtime_execution_admission_record(PYTHON_ADMISSION_RECORD_EXAMPLE)
             .expect("valid not-granted Python execution admission record example");
+        parse_python_runtime_execution_admission(PYTHON_ADMISSION_V2_EXAMPLE)
+            .expect("valid not-granted Python execution admission v2 example");
+        parse_python_runtime_execution_admission_record(PYTHON_ADMISSION_RECORD_V2_EXAMPLE)
+            .expect("valid not-granted Python execution admission record v2 example");
         parse_phaseledger_caller_observation(PHASELEDGER_CALLER_OBSERVATION_EXAMPLE)
             .expect("valid Phaseledger caller observation example");
         parse_ide_handoff(HANDOFF_EXAMPLE).expect("valid IDE handoff example");
@@ -1499,6 +1511,8 @@ mod tests {
             include_str!("../contracts/python-runtime-qualification-record-v1.schema.json"),
             include_str!("../contracts/python-runtime-execution-admission-v1.schema.json"),
             include_str!("../contracts/python-runtime-execution-admission-record-v1.schema.json"),
+            include_str!("../contracts/python-runtime-execution-admission-v2.schema.json"),
+            include_str!("../contracts/python-runtime-execution-admission-record-v2.schema.json"),
             include_str!("../contracts/phaseledger-caller-observation-v1.schema.json"),
             include_str!("../contracts/native-delivery-qualification-v1.schema.json"),
             include_str!("../contracts/ide-handoff-v1.schema.json"),

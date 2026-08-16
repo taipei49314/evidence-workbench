@@ -1836,6 +1836,45 @@ fn python_admission_cli_satisfies_implementable_proofs_but_stays_not_granted() {
         "not_granted_by_residual_python_containment_blockers"
     );
 
+    let (code, proved, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-admissions",
+                "prove-containment",
+                "--admission",
+                admission_id,
+            ]),
+    );
+    assert_eq!(code, 0, "{proved:?} {stderr}");
+    assert_eq!(proved["command"], "python-admissions.prove-containment");
+    assert_eq!(
+        proved["data"]["payload"]["schema_version"],
+        "python_runtime_execution_admission/v2"
+    );
+    assert_eq!(
+        proved["data"]["payload"]["admission_state"]["state"],
+        "not_granted"
+    );
+    let proved_state = |code: &str| {
+        proved["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["code"] == code)
+            .unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(proved_state("os_network_egress_denial"), "failed");
+    assert_eq!(proved_state("python_active_process_limit_one"), "failed");
+    assert_eq!(
+        proved_state("python_creation_time_job_assignment"),
+        "failed"
+    );
+
     let (code, still_blocked, stderr) = run_json(
         production_ewb()
             .args(["--json", "--workspace"])
@@ -4040,6 +4079,25 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
     assert_eq!(object_files, vec![expected_object.clone()]);
     assert_eq!(fs::read(expected_object).unwrap(), bytes);
     assert_eq!(fs::read_dir(root.join(".ewb/tmp")).unwrap().count(), 0);
+}
+
+#[test]
+fn python_admission_prove_containment_requires_a_v1_admission() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let (code, failure, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-admissions",
+                "prove-containment",
+                "--admission",
+                "admission_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert_eq!(failure["ok"], false);
 }
 
 #[test]
