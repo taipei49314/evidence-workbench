@@ -236,12 +236,20 @@ ewb --json --workspace C:\evidence-workspace python-admissions verify `
   $admission.data.admission_id
 $containment = ewb --json --workspace C:\evidence-workspace python-admissions prove-containment `
   --admission $admission.data.admission_id | ConvertFrom-Json
+$network = ewb --json --workspace C:\evidence-workspace python-admissions prove-network `
+  --admission $containment.data.admission_id | ConvertFrom-Json
 ```
 
 `prove-containment` writes a v2 record that may mark creation-time Job Object
 assignment and ActiveProcessLimit=1 `satisfied`. It still cannot mark
 `os_network_egress_denial` satisfied, cannot grant admission, and does not
 set pin `ready`. `admit` itself still does not spawn `python.exe`.
+
+`prove-network` writes a v3 record that may mark `os_network_egress_denial`
+`satisfied` after a CreateProcess-time AppContainer (zero capabilities)
+fails a parent-owned `127.0.0.1` connect. It still cannot grant admission
+and does not set pin `ready`. `admit` and `prove-containment` never call
+that path.
 
 An official CPython Windows embed zip can be supplied by the operator and
 admitted the same way. EWB does not vendor or download that zip. The stock

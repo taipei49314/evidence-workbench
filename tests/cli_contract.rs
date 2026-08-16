@@ -1875,6 +1875,41 @@ fn python_admission_cli_satisfies_implementable_proofs_but_stays_not_granted() {
         "failed"
     );
 
+    let v2_id = proved["data"]["admission_id"].as_str().unwrap();
+    let (code, networked, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-admissions",
+                "prove-network",
+                "--admission",
+                v2_id,
+            ]),
+    );
+    assert_eq!(code, 0, "{networked:?} {stderr}");
+    assert_eq!(networked["command"], "python-admissions.prove-network");
+    assert_eq!(
+        networked["data"]["payload"]["schema_version"],
+        "python_runtime_execution_admission/v3"
+    );
+    assert_eq!(
+        networked["data"]["payload"]["admission_state"]["state"],
+        "not_granted"
+    );
+    let networked_state = |code: &str| {
+        networked["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["code"] == code)
+            .unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(networked_state("os_network_egress_denial"), "failed");
+
     let (code, still_blocked, stderr) = run_json(
         production_ewb()
             .args(["--json", "--workspace"])
@@ -4079,6 +4114,25 @@ fn concurrent_init_and_artifact_adds_commit_only_complete_records() {
     assert_eq!(object_files, vec![expected_object.clone()]);
     assert_eq!(fs::read(expected_object).unwrap(), bytes);
     assert_eq!(fs::read_dir(root.join(".ewb/tmp")).unwrap().count(), 0);
+}
+
+#[test]
+fn python_admission_prove_network_requires_a_v2_admission() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+    let (code, failure, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-admissions",
+                "prove-network",
+                "--admission",
+                "admission_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ]),
+    );
+    assert_eq!(code, 2, "{failure:?} {stderr}");
+    assert_eq!(failure["ok"], false);
 }
 
 #[test]
