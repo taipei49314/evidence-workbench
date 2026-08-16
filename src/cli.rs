@@ -231,6 +231,12 @@ pub enum PythonAdmissionsSubcommand {
         #[arg(long, value_name = "ADMISSION_ID")]
         admission: String,
     },
+    /// Prove CreateProcess-time AppContainer network denial of the bound python.exe.
+    /// Cites a v2 admission. Does not grant admission. Admit and prove-containment never call this path.
+    ProveNetwork {
+        #[arg(long, value_name = "ADMISSION_ID")]
+        admission: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -727,6 +733,10 @@ fn python_admissions(cli: &Cli, command: &PythonAdmissionsCommand) -> Result<Com
         PythonAdmissionsSubcommand::ProveContainment { admission } => success(
             "python-admissions.prove-containment",
             serde_json::to_value(python_admissions::prove_containment(&workspace, admission)?)?,
+        ),
+        PythonAdmissionsSubcommand::ProveNetwork { admission } => success(
+            "python-admissions.prove-network",
+            serde_json::to_value(python_admissions::prove_network(&workspace, admission)?)?,
         ),
     }
 }

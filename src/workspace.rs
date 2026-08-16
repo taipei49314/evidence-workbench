@@ -667,6 +667,9 @@ impl Workspace {
             "python_runtime_execution_admission/v2" => {
                 "python_runtime_execution_admission_record/v2"
             }
+            "python_runtime_execution_admission/v3" => {
+                "python_runtime_execution_admission_record/v3"
+            }
             _ => "",
         };
         if expected_record_schema.is_empty()

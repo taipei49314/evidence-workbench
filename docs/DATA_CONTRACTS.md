@@ -141,6 +141,19 @@ stays `failed` because a Job Object is not a network filter. The only
 admission state is still `not_granted`. An empty Job Object or a post-start
 `AssignProcessToJobObject` is not creation-time assignment.
 
+`python_runtime_execution_admission/v3` is a prove-network record, not an
+execution permit. `python-admissions prove-network --admission` cites one
+verified v2 admission and may start the bound `python.exe` with fixed
+`-I -S -B -X utf8` plus a loopback connect script only to CreateProcess it
+through `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` (AppContainer, zero
+capabilities) together with the same creation-time Job Object limits.
+`os_network_egress_denial` may be `satisfied` only when the process token is
+an AppContainer, the child exits the denied-connect protocol, and the parent
+listener never accepts. `admit` and `prove-containment` never call that path.
+v2 still cannot mark network denial satisfied. The only admission state is
+still `not_granted`. A Job Object, an empty PATH, or an AppContainer SID
+without the connect observation is not network denial. WFP is out of scope.
+
 `phaseledger-caller-observation/v1` is a caller-authored cite contract for a
 future Phaseledger 0.6.0 observation file. It requires a present exact artifact
 ID, matching SHA-256, a claim that names that ID/digest plus

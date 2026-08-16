@@ -11,6 +11,7 @@ pub mod native;
 pub mod native_qualifications;
 pub mod python_admissions;
 pub mod python_containment;
+pub mod python_network;
 pub mod python_qualifications;
 pub mod run_validation;
 pub mod runtime_capsules;
