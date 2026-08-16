@@ -324,6 +324,113 @@ pub fn admit(
     Ok(record)
 }
 
+const PROVE_ARCHIVE_ALLOWLIST: &[&str] = &[
+    "python.exe",
+    "python313.dll",
+    "python313.zip",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "_socket.pyd",
+    "select.pyd",
+];
+
+struct ProveRoot {
+    _cleanup: TmpRoot,
+    launcher: PathBuf,
+    scratch: PathBuf,
+}
+
+fn materialize_prove_root(
+    workspace: &Workspace,
+    inventory: &PythonRuntimeQualification,
+    label: &str,
+) -> Result<ProveRoot> {
+    let capsule = runtime_capsules::load_verified(workspace, &inventory.capsule_ref.id)?;
+    if capsule.record_digest != inventory.capsule_ref.record_digest {
+        bail!("Python prove capsule digest mismatch");
+    }
+    let launcher = workspace.load_artifact(&capsule.payload.launcher.artifact_id)?;
+    let archive = load_binding(workspace, &inventory.runtime_inputs.cpython_archive)?;
+    let path_config = load_binding(
+        workspace,
+        &inventory.runtime_inputs.path_configuration.artifact,
+    )?;
+    let root = workspace
+        .state
+        .join("tmp")
+        .join(format!("{label}-{}", Uuid::new_v4().simple()));
+    fs::create_dir(&root).with_context(|| format!("cannot create private {label} prove root"))?;
+    reject_reparse(&root, true)?;
+    let cleanup = TmpRoot(root.clone());
+    let launcher_path = root.join("python.exe");
+    copy_verified_create_new(workspace, &launcher, &launcher_path)?;
+    let launcher_bytes = workspace.read_verified_descriptor(&launcher.artifact)?;
+    if let Ok(members) = inspect_zip(&archive.1, "CPython archive") {
+        for (name, member) in members {
+            if name.contains('/') {
+                continue;
+            }
+            if !PROVE_ARCHIVE_ALLOWLIST
+                .iter()
+                .any(|allowed| name.eq_ignore_ascii_case(allowed))
+            {
+                continue;
+            }
+            if name.eq_ignore_ascii_case("python.exe") {
+                if member != launcher_bytes {
+                    continue;
+                }
+                continue;
+            }
+            write_prove_archive_member(&root, &name, &member)?;
+        }
+    }
+    let pth_name = Path::new(&inventory.runtime_inputs.path_configuration.path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("path configuration path must have a UTF-8 file name")?;
+    copy_verified_create_new(workspace, &path_config.0, &root.join(pth_name))?;
+    let scratch = root.join("scratch");
+    fs::create_dir(&scratch).context("cannot create private prove scratch")?;
+    reject_reparse(&scratch, true)?;
+    Ok(ProveRoot {
+        _cleanup: cleanup,
+        launcher: launcher_path,
+        scratch,
+    })
+}
+
+fn write_prove_archive_member(root: &Path, name: &str, member: &[u8]) -> Result<()> {
+    if Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pyd"))
+    {
+        let site = root.join("site");
+        if !site.exists() {
+            fs::create_dir(&site).context("cannot create private prove-root site directory")?;
+        }
+        reject_reparse(&site, true)?;
+        write_create_new_bytes(&site.join(name), member)?;
+    }
+    write_create_new_bytes(&root.join(name), member)
+}
+
+fn write_create_new_bytes(destination: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .context("cannot create a private single-link prove copy")?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    let metadata = fs::symlink_metadata(destination)?;
+    if !metadata.is_file() || is_reparse(&metadata) || !is_single_link(destination)? {
+        bail!("private prove copy is not a regular single-link file");
+    }
+    Ok(())
+}
+
 pub fn prove_containment(
     workspace: &Workspace,
     admission_id: &str,
@@ -355,22 +462,8 @@ fn prove_containment_windows(
     if inventory.record_digest != source.payload.inventory_qualification_ref.record_digest {
         bail!("Python containment prove inventory qualification digest mismatch");
     }
-    let capsule = runtime_capsules::load_verified(workspace, &inventory.payload.capsule_ref.id)?;
-    if capsule.record_digest != inventory.payload.capsule_ref.record_digest {
-        bail!("Python containment prove capsule digest mismatch");
-    }
-    let launcher = workspace.load_artifact(&capsule.payload.launcher.artifact_id)?;
-    let root = workspace
-        .state
-        .join("tmp")
-        .join(format!("containment-{}", Uuid::new_v4().simple()));
-    fs::create_dir(&root).context("cannot create private containment prove root")?;
-    let _cleanup = TmpRoot(root.clone());
-    let launcher_path = root.join("python.exe");
-    copy_verified_create_new(workspace, &launcher, &launcher_path)?;
-    let scratch = root.join("scratch");
-    fs::create_dir(&scratch)?;
-    let proof = python_containment::prove_bound_python(&launcher_path, &scratch)?;
+    let root = materialize_prove_root(workspace, &inventory.payload, "containment")?;
+    let proof = python_containment::prove_bound_python(&root.launcher, &root.scratch)?;
 
     let mut checks = source.payload.checks.clone();
     for check in &mut checks {
@@ -459,25 +552,14 @@ fn prove_network_windows(
     if inventory.record_digest != source.payload.inventory_qualification_ref.record_digest {
         bail!("Python network prove inventory qualification digest mismatch");
     }
-    let capsule = runtime_capsules::load_verified(workspace, &inventory.payload.capsule_ref.id)?;
-    if capsule.record_digest != inventory.payload.capsule_ref.record_digest {
-        bail!("Python network prove capsule digest mismatch");
-    }
-    let launcher = workspace.load_artifact(&capsule.payload.launcher.artifact_id)?;
-    let root = workspace
-        .state
-        .join("tmp")
-        .join(format!("network-{}", Uuid::new_v4().simple()));
-    fs::create_dir(&root).context("cannot create private network prove root")?;
-    let _cleanup = TmpRoot(root.clone());
-    let launcher_path = root.join("python.exe");
-    copy_verified_create_new(workspace, &launcher, &launcher_path)?;
-    let scratch = root.join("scratch");
-    fs::create_dir(&scratch)?;
+    let root = materialize_prove_root(workspace, &inventory.payload, "network")?;
     let admission_id = format!("admission_{}", Uuid::new_v4().simple());
     let profile_name = format!("ewb.prove.{}", admission_id.trim_start_matches("admission_"));
-    let proof =
-        python_network::prove_bound_python_network(&launcher_path, &scratch, &profile_name)?;
+    let proof = python_network::prove_bound_python_network(
+        &root.launcher,
+        &root.scratch,
+        &profile_name,
+    )?;
 
     let mut checks = source.payload.checks.clone();
     for check in &mut checks {
@@ -1791,6 +1873,10 @@ mod tests {
         let archive = write_zip(&[
             ("python.exe", launcher),
             ("python313.zip", b"stdlib-bytes"),
+            ("_socket.pyd", b"socket-pyd"),
+            ("select.pyd", b"select-pyd"),
+            ("pythonw.exe", b"should-not-extract"),
+            ("_ssl.pyd", b"should-not-extract"),
         ]);
         let path_configuration = b"python313.zip\nsite\n";
 
@@ -2016,6 +2102,38 @@ mod tests {
                 .iter()
                 .any(|code| code == "ambient_ancestor_config_not_isolated")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prove_root_extracts_allowlist_and_isolated_pth() {
+        let (_temporary, workspace, admission) = closed_embed_admission();
+        let inventory = python_qualifications::load_verified(
+            &workspace,
+            &admission.payload.inventory_qualification_ref.qualification_id,
+        )
+        .unwrap();
+        let root = materialize_prove_root(&workspace, &inventory.payload, "test").unwrap();
+        let home = root.launcher.parent().unwrap();
+        assert_eq!(fs::read(&root.launcher).unwrap(), b"embed-launcher");
+        assert_eq!(fs::read(home.join("python313.zip")).unwrap(), b"stdlib-bytes");
+        assert_eq!(
+            fs::read(home.join("python313._pth")).unwrap(),
+            b"python313.zip\nsite\n"
+        );
+        assert_eq!(fs::read(home.join("_socket.pyd")).unwrap(), b"socket-pyd");
+        assert_eq!(fs::read(home.join("select.pyd")).unwrap(), b"select-pyd");
+        assert_eq!(
+            fs::read(home.join("site").join("_socket.pyd")).unwrap(),
+            b"socket-pyd"
+        );
+        assert_eq!(
+            fs::read(home.join("site").join("select.pyd")).unwrap(),
+            b"select-pyd"
+        );
+        assert!(!home.join("pythonw.exe").exists());
+        assert!(!home.join("_ssl.pyd").exists());
+        assert!(!home.join("site").join("_ssl.pyd").exists());
     }
 
     #[cfg(windows)]

@@ -12,7 +12,7 @@ pub const PROVE_SCRIPT: &str = concat!(
     "try:\n",
     " s.connect(('127.0.0.1',p))\n",
     "except OSError:\n",
-    " open(m,'w',encoding='ascii').write('denied\\n')\n",
+    " open(m,'wb').write(b'denied\\n')\n",
     " sys.exit(0)\n",
     "else:\n",
     " sys.exit(3)"
@@ -111,7 +111,16 @@ fn prove_bound_python_network_windows(
         Ok(profile) => profile,
         Err(_) => return Ok(ResidualNetworkProof::all_failed()),
     };
-    for path in [launcher, scratch, empty_path.as_path(), temp.as_path()] {
+    let mut grant_paths = vec![
+        launcher.to_path_buf(),
+        scratch.to_path_buf(),
+        empty_path.clone(),
+        temp.clone(),
+    ];
+    if let Some(home) = launcher.parent() {
+        push_grant_tree(home, &mut grant_paths);
+    }
+    for path in &grant_paths {
         if grant_appcontainer_access(path, profile.sid).is_err() {
             return Ok(ResidualNetworkProof::all_failed());
         }
@@ -255,6 +264,22 @@ fn prove_bound_python_network_windows(
             process_limit,
             network_egress,
         })
+    }
+}
+
+#[cfg(windows)]
+fn push_grant_tree(path: &Path, paths: &mut Vec<std::path::PathBuf>) {
+    paths.push(path.to_path_buf());
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let child = entry.path();
+        if child.is_dir() {
+            push_grant_tree(&child, paths);
+        } else {
+            paths.push(child);
+        }
     }
 }
 
@@ -645,6 +670,14 @@ mod tests {
         assert_eq!(
             observe_network_egress(true, NETWORK_DENIED_EXIT, b"", false),
             PythonAdmissionCheckState::Failed
+        );
+        assert_eq!(
+            observe_network_egress(true, NETWORK_DENIED_EXIT, b"denied\r\n", false),
+            PythonAdmissionCheckState::Failed
+        );
+        assert!(
+            PROVE_SCRIPT.contains("open(m,'wb').write(b'denied\\n')"),
+            "official CPython text mode would write CRLF and fail the marker"
         );
         assert_eq!(
             observe_network_egress(false, NETWORK_DENIED_EXIT, NETWORK_DENIED_MARKER, false),
