@@ -29,6 +29,7 @@ pub struct ResidualNetworkProof {
 }
 
 impl ResidualNetworkProof {
+    #[cfg(windows)]
     fn all_failed() -> Self {
         Self {
             job_assignment: PythonAdmissionCheckState::Failed,
@@ -283,6 +284,7 @@ fn push_grant_tree(path: &Path, paths: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+#[cfg(windows)]
 fn valid_profile_name(name: &str) -> bool {
     (1..=64).contains(&name.len())
         && name

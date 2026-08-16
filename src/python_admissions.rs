@@ -324,6 +324,7 @@ pub fn admit(
     Ok(record)
 }
 
+#[cfg(windows)]
 const PROVE_ARCHIVE_ALLOWLIST: &[&str] = &[
     "python.exe",
     "python313.dll",
@@ -334,12 +335,14 @@ const PROVE_ARCHIVE_ALLOWLIST: &[&str] = &[
     "select.pyd",
 ];
 
+#[cfg(windows)]
 struct ProveRoot {
     _cleanup: TmpRoot,
     launcher: PathBuf,
     scratch: PathBuf,
 }
 
+#[cfg(windows)]
 fn materialize_prove_root(
     workspace: &Workspace,
     inventory: &PythonRuntimeQualification,
@@ -400,6 +403,7 @@ fn materialize_prove_root(
     })
 }
 
+#[cfg(windows)]
 fn write_prove_archive_member(root: &Path, name: &str, member: &[u8]) -> Result<()> {
     if Path::new(name)
         .extension()
@@ -415,6 +419,7 @@ fn write_prove_archive_member(root: &Path, name: &str, member: &[u8]) -> Result<
     write_create_new_bytes(&root.join(name), member)
 }
 
+#[cfg(windows)]
 fn write_create_new_bytes(destination: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = fs::OpenOptions::new()
         .write(true)

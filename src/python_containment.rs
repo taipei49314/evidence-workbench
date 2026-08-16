@@ -303,11 +303,10 @@ fn windows_directory() -> Result<std::path::PathBuf> {
 #[cfg(windows)]
 use std::fs;
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
-    #[cfg(windows)]
     #[test]
     fn creation_time_job_and_process_limit_use_real_pe() {
         let launcher = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
@@ -323,7 +322,6 @@ mod tests {
         );
     }
 
-    #[cfg(windows)]
     #[test]
     fn non_pe_launcher_fails_closed() {
         let scratch = tempfile::tempdir().unwrap();
