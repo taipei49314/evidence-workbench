@@ -1499,15 +1499,9 @@ fn python_qualification_cli_binds_exact_inventory_but_never_plans_or_executes() 
         "satisfied"
     );
     assert_eq!(check_state("python_private_materialization"), "satisfied");
-    assert_eq!(check_state("os_network_egress_denial"), "not_implemented");
-    assert_eq!(
-        check_state("python_active_process_limit_one"),
-        "not_implemented"
-    );
-    assert_eq!(
-        check_state("python_creation_time_job_assignment"),
-        "not_implemented"
-    );
+    assert_eq!(check_state("os_network_egress_denial"), "failed");
+    assert_eq!(check_state("python_active_process_limit_one"), "failed");
+    assert_eq!(check_state("python_creation_time_job_assignment"), "failed");
     let admission_id = admitted["data"]["admission_id"].as_str().unwrap();
     let (code, verified, stderr) = run_json(
         production_ewb()
@@ -1826,7 +1820,7 @@ fn python_admission_cli_satisfies_implementable_proofs_but_stays_not_granted() {
         "python_active_process_limit_one",
         "python_creation_time_job_assignment",
     ] {
-        assert_eq!(check_state(code), "not_implemented", "{code}");
+        assert_eq!(check_state(code), "failed", "{code}");
     }
     let admission_id = admitted["data"]["admission_id"].as_str().unwrap();
     let (code, verified, stderr) = run_json(

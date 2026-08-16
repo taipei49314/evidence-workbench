@@ -176,10 +176,17 @@ pub fn admit(
 
     let recorder = native::recorder_identity()?;
     let proofs = evaluate_implementable_proofs(workspace, &inventory_record.payload)?;
+    let residual = evaluate_residual_checks();
     let mut checks = Vec::new();
     for code in CHECK_CODES {
         let (state, evidence_refs) = if RESIDUAL_CONTAINMENT_CODES.contains(code) {
-            (PythonAdmissionCheckState::NotImplemented, Vec::new())
+            (
+                residual
+                    .get(*code)
+                    .cloned()
+                    .unwrap_or(PythonAdmissionCheckState::Failed),
+                Vec::new(),
+            )
         } else {
             proofs
                 .get(*code)
@@ -336,6 +343,21 @@ fn evaluate_implementable_proofs(
             .or_insert((PythonAdmissionCheckState::Failed, Vec::new()));
     }
     Ok(proofs)
+}
+
+fn evaluate_residual_checks() -> BTreeMap<&'static str, PythonAdmissionCheckState> {
+    let mut checks = BTreeMap::new();
+    for code in RESIDUAL_CONTAINMENT_CODES {
+        checks.insert(*code, prove_residual(code));
+    }
+    checks
+}
+
+fn prove_residual(_code: &str) -> PythonAdmissionCheckState {
+    // Spawnless admit cannot CreateProcess-assign python.exe, apply a network
+    // filter to that process, or observe an ActiveProcessLimit of one on it.
+    // An empty Job Object is not those proofs. Residual checks stay failed.
+    PythonAdmissionCheckState::Failed
 }
 
 fn outcome(error: Option<anyhow::Error>, evidence: Vec<ArtifactRecordRef>) -> CheckOutcome {
@@ -1007,6 +1029,27 @@ mod tests {
     }
 
     #[test]
+    fn residual_checks_fail_closed_without_spawning_python() {
+        let residual = evaluate_residual_checks();
+        assert_eq!(residual.len(), RESIDUAL_CONTAINMENT_CODES.len());
+        for code in RESIDUAL_CONTAINMENT_CODES {
+            assert_eq!(
+                residual.get(*code),
+                Some(&PythonAdmissionCheckState::Failed),
+                "{code}"
+            );
+            assert_ne!(
+                residual.get(*code),
+                Some(&PythonAdmissionCheckState::Satisfied)
+            );
+        }
+        assert_eq!(
+            prove_residual("unknown_residual"),
+            PythonAdmissionCheckState::Failed
+        );
+    }
+
+    #[test]
     fn residual_containment_cannot_be_marked_satisfied() {
         let mut payload = example_payload();
         payload.checks[1].state = PythonAdmissionCheckState::Satisfied;
@@ -1506,15 +1549,15 @@ mod tests {
         );
         assert_eq!(
             check("os_network_egress_denial"),
-            PythonAdmissionCheckState::NotImplemented
+            PythonAdmissionCheckState::Failed
         );
         assert_eq!(
             check("python_active_process_limit_one"),
-            PythonAdmissionCheckState::NotImplemented
+            PythonAdmissionCheckState::Failed
         );
         assert_eq!(
             check("python_creation_time_job_assignment"),
-            PythonAdmissionCheckState::NotImplemented
+            PythonAdmissionCheckState::Failed
         );
         assert_eq!(
             admission.payload.admission_state.blocker_codes,

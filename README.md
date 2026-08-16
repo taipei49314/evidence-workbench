@@ -222,9 +222,10 @@ is a registry locator, not a trust statement or content digest.
 re-proves the five implementable checks from exact CAS bytes without spawning
 Python: CPython zip semantics, wheel/RECORD closure, isolated `_pth` grammar,
 the fixed launch contract plus embedded wrapper digest, and a disposable
-private materialization. Residual containment checks cannot be marked
-satisfied. The sibling `python_runtime_execution_admission/v1` stays
-`not_granted`. The record may be bound as `python_admission_ref` on a later
+private materialization. Residual containment checks are recorded as
+`failed` because spawnless admit cannot prove OS containment of
+`python.exe`; they still cannot be marked satisfied. The sibling
+`python_runtime_execution_admission/v1` stays `not_granted`. The record may be bound as `python_admission_ref` on a later
 plan; it does not set `enabled_by_default` or pin `ready`, and it cannot be
 replaced by a `qualification_*` inventory ID.
 
