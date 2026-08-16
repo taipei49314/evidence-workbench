@@ -2193,7 +2193,7 @@ fn python_admission_cli_accepts_official_embed_bytes_but_stays_not_granted() {
         "python_active_process_limit_one",
         "python_creation_time_job_assignment",
     ] {
-        assert_eq!(check_state(code), "not_implemented", "{code}");
+        assert_eq!(check_state(code), "failed", "{code}");
     }
     let admission_id = admitted["data"]["admission_id"].as_str().unwrap();
     let plans_before = fs::read_dir(temp.path().join(".ewb/plans"))
