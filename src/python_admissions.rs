@@ -330,6 +330,8 @@ const PROVE_ARCHIVE_ALLOWLIST: &[&str] = &[
     "python313.zip",
     "vcruntime140.dll",
     "vcruntime140_1.dll",
+    "_socket.pyd",
+    "select.pyd",
 ];
 
 struct ProveRoot {
@@ -380,7 +382,7 @@ fn materialize_prove_root(
                 }
                 continue;
             }
-            write_create_new_bytes(&root.join(&name), &member)?;
+            write_prove_archive_member(&root, &name, &member)?;
         }
     }
     let pth_name = Path::new(&inventory.runtime_inputs.path_configuration.path)
@@ -396,6 +398,21 @@ fn materialize_prove_root(
         launcher: launcher_path,
         scratch,
     })
+}
+
+fn write_prove_archive_member(root: &Path, name: &str, member: &[u8]) -> Result<()> {
+    if Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pyd"))
+    {
+        let site = root.join("site");
+        if !site.exists() {
+            fs::create_dir(&site).context("cannot create private prove-root site directory")?;
+        }
+        reject_reparse(&site, true)?;
+        write_create_new_bytes(&site.join(name), member)?;
+    }
+    write_create_new_bytes(&root.join(name), member)
 }
 
 fn write_create_new_bytes(destination: &Path, bytes: &[u8]) -> Result<()> {
@@ -1856,6 +1873,10 @@ mod tests {
         let archive = write_zip(&[
             ("python.exe", launcher),
             ("python313.zip", b"stdlib-bytes"),
+            ("_socket.pyd", b"socket-pyd"),
+            ("select.pyd", b"select-pyd"),
+            ("pythonw.exe", b"should-not-extract"),
+            ("_ssl.pyd", b"should-not-extract"),
         ]);
         let path_configuration = b"python313.zip\nsite\n";
 
@@ -2100,8 +2121,19 @@ mod tests {
             fs::read(home.join("python313._pth")).unwrap(),
             b"python313.zip\nsite\n"
         );
+        assert_eq!(fs::read(home.join("_socket.pyd")).unwrap(), b"socket-pyd");
+        assert_eq!(fs::read(home.join("select.pyd")).unwrap(), b"select-pyd");
+        assert_eq!(
+            fs::read(home.join("site").join("_socket.pyd")).unwrap(),
+            b"socket-pyd"
+        );
+        assert_eq!(
+            fs::read(home.join("site").join("select.pyd")).unwrap(),
+            b"select-pyd"
+        );
         assert!(!home.join("pythonw.exe").exists());
-        assert!(!home.join("site").exists());
+        assert!(!home.join("_ssl.pyd").exists());
+        assert!(!home.join("site").join("_ssl.pyd").exists());
     }
 
     #[cfg(windows)]

@@ -70,8 +70,13 @@ The official zip itself is the `--cpython-archive-artifact`. The extracted
 `prove-containment` and `prove-network` copy the bound `python.exe` and the
 admitted isolated `_pth`, then extract only these members from the verified
 official archive when present: `python313.dll`, `python313.zip`,
-`vcruntime140.dll`, `vcruntime140_1.dll`. They do not extract `pythonw.exe`,
-LICENSE, or `site/`. That private root is not an execution permit.
+`vcruntime140.dll`, `vcruntime140_1.dll`, `_socket.pyd`, and `select.pyd`.
+Extension modules are copied next to `python.exe` and into a prove-root
+`site/` directory so the admitted `_pth` (`python313.zip` plus `site` or `.`)
+can `import socket`. They do not extract `pythonw.exe`, LICENSE, `_ssl.pyd`,
+or wheel `site/` packages. The prove-network script writes the denied marker
+as exact `denied\n` bytes; Windows text-mode CRLF is not accepted. That
+private root is not an execution permit.
 
 ## Wheel without spawning Python
 
