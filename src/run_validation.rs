@@ -45,6 +45,7 @@ pub fn validate(workspace: &Workspace, run: &InstrumentRun) -> Result<()> {
         &run.tool_ref.manifest_id,
         &run.upstream_pin_ref,
         run.native_qualification_ref.as_ref(),
+        run.python_admission_ref.as_ref(),
         &run.resolved_tool_identity,
         &manifest.invocation_contract.operation,
         Some(&run.source_plan_ref.plan_id),
@@ -82,6 +83,7 @@ fn validate_source_plan_lineage(workspace: &Workspace, run: &InstrumentRun) -> R
     if run.tool_ref != payload.tool_ref
         || run.upstream_pin_ref != payload.upstream_pin_ref
         || run.native_qualification_ref != payload.native_qualification_ref
+        || run.python_admission_ref != payload.python_admission_ref
         || run.resolved_tool_identity != payload.resolved_tool_identity
         || run.recorder_identity != payload.recorder_identity
         || run.adapter != payload.adapter
@@ -154,6 +156,7 @@ fn validate_plan_inner(
         &plan.tool_ref.manifest_id,
         &plan.upstream_pin_ref,
         plan.native_qualification_ref.as_ref(),
+        plan.python_admission_ref.as_ref(),
         &plan.resolved_tool_identity,
         &manifest.invocation_contract.operation,
         Some(plan_id),
@@ -194,6 +197,7 @@ fn validate_upstream_and_qualification(
     manifest_id: &str,
     upstream_ref: &crate::contracts::UpstreamPinRef,
     qualification_ref: Option<&crate::contracts::NativeQualificationRef>,
+    python_admission_ref: Option<&crate::contracts::PythonAdmissionRef>,
     identity: &crate::contracts::BinaryIdentity,
     operation: &str,
     expected_plan_id: Option<&str>,
@@ -215,6 +219,12 @@ fn validate_upstream_and_qualification(
         &upstream.sha256,
         &identity.sha256,
         execution_preflight,
+    )?;
+    crate::python_admissions::validate_bound_ref(
+        workspace,
+        python_admission_ref,
+        manifest_id,
+        operation,
     )?;
     if manifest_id == "tomorrowci-lab" {
         let expected_plan_id = expected_plan_id

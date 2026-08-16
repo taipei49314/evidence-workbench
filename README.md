@@ -95,7 +95,7 @@ ewb --json tools list
 
 `doctor` is read-only and does not launch native version commands. `tools probe` is also rejected for every `fail_closed` adapter; it may launch a version probe only after a future production adapter has an admitted complete runtime closure. Trusted manifests are compiled into the `ewb` binary; files placed under `.ewb/manifests` cannot grant a new executable, capability, result, or authority claim.
 
-`.ewb/handoffs` and `.ewb/python-qualifications` are required workspace
+`.ewb/handoffs`, `.ewb/python-qualifications`, and `.ewb/python-admissions` are required workspace
 directories. After upgrading an existing workspace, run the same idempotent
 `ewb --json --workspace <PATH> init` command once to add either missing
 directory. Until then, normal workspace opens and registry commands fail
@@ -111,6 +111,7 @@ ewb --json --workspace C:\evidence-workspace artifacts list
 ewb --json --workspace C:\evidence-workspace artifacts show <ARTIFACT_ID>
 ewb --json --workspace C:\evidence-workspace qualifications list
 ewb --json --workspace C:\evidence-workspace python-qualifications list
+ewb --json --workspace C:\evidence-workspace python-admissions list
 ewb --json --workspace C:\evidence-workspace handoffs list
 ewb --json --workspace C:\evidence-workspace handoffs show <HANDOFF_ID>
 ```
@@ -217,6 +218,20 @@ still fails with `python_runtime_qualification_not_connected`, regardless of a
 capsule descriptor's claimed readiness. The opaque `qualification_<32hex>` ID
 is a registry locator, not a trust statement or content digest.
 
+`python-admissions admit` cites one verified incomplete inventory record and
+writes a sibling `python_runtime_execution_admission/v1` that stays
+`not_granted`. Residual containment checks cannot be marked satisfied. The
+record may be bound as `python_admission_ref` on a later plan; it does not set
+`enabled_by_default` or pin `ready`, and it cannot be replaced by a
+`qualification_*` inventory ID.
+
+```powershell
+$admission = ewb --json --workspace C:\evidence-workspace python-admissions admit `
+  --inventory-qualification $qualification.data.qualification_id | ConvertFrom-Json
+ewb --json --workspace C:\evidence-workspace python-admissions verify `
+  $admission.data.admission_id
+```
+
 ### Untrusted GitHub discovery handoff
 
 `github-radar` discovery remains outside EWB's trusted execution plane. First
@@ -296,24 +311,51 @@ ewb --json --workspace C:\evidence-workspace runs plan `
 
 Planning is disabled until an exact Windows executable is admitted and its optional Git subprocess dependency is eliminated or immutably bound. Even then, `inspect` would not run a scenario or establish a RepoPassport verification verdict; RepoPassport exit `0` would remain command completion only.
 
-### trust-meter and phaseledger future invocations (currently fail closed)
+### trust-meter and phaseledger vertical slice (currently fail closed)
 
-They remain separate native runs. EWB does not pipe a trust-meter boolean directly into phaseledger or invent a claim:
+They remain separate native runs. The Trust Meter adapter's only machine argv is
+`<git-root> --json-v1 --no-config --threshold <N> --phase <P>`, which selects
+the fixed `builtin-static-v1` collectors and refuses ambient
+`.trust-meter.toml`. Observation selectors are `/result/advisory_gate_met`,
+`/result/threshold_met`, and `/result/overall_score`. There is no `/passed`
+selector. EWB does not copy those projections into a Phaseledger observation or
+invent a claim. `tools probe trust-meter` and `tools probe phaseledger` exit `2`
+while the pins stay `fail_closed`.
+
+The intended later path is exact transport only:
+
+```text
+Trust Meter measure
+  -> exact stdout artifact
+    -> verified evidence-handoff
+  -> caller-authored Phaseledger observation
+  -> Phaseledger measure on exact artifact ID
+  -> independent native VERDICT
+```
 
 ```powershell
 $measure = ewb --json --workspace C:\evidence-workspace runs plan `
   --tool trust-meter --subject C:\repo `
+  --python-admission $admission.data.admission_id `
   --param threshold=75 --param phase=preflight | ConvertFrom-Json
 ewb --json --workspace C:\evidence-workspace runs execute `
   --plan $measure.data.plan_id `
   --plan-digest $measure.data.record_digest `
   --allow read_subject
 
+$handoff = ewb --json --workspace C:\evidence-workspace handoffs create `
+  --source-run $measure.data.run_id `
+  --source-run-digest $measure.data.record_digest `
+  --artifact $stdoutArtifactId | ConvertFrom-Json
+
+# Caller, not EWB, writes phaseledger-caller-observation/v1 and maps it
+# to Phaseledger 0.6.0 measure JSON. Handoff IDs are not plan inputs.
 $artifact = ewb --json --workspace C:\evidence-workspace artifacts add `
   --file C:\evidence\observation.json --role handoff_input `
   --media-type application/json | ConvertFrom-Json
 $gate = ewb --json --workspace C:\evidence-workspace runs plan `
-  --tool phaseledger --runtime-capsule $capsule.data.capsule_id `
+  --tool phaseledger `
+  --python-admission $phaseledgerAdmission.data.admission_id `
   --input-artifact $artifact.data.artifact_id | ConvertFrom-Json
 ewb --json --workspace C:\evidence-workspace runs execute `
   --plan $gate.data.plan_id `
@@ -321,7 +363,17 @@ ewb --json --workspace C:\evidence-workspace runs execute `
   --allow read_artifact
 ```
 
-The caller remains responsible for constructing an honest phaseledger observation whose claim scope names the exact subject and predicate source. `--input-artifact` selects one existing verified workspace artifact by its exact ID; it does not inspect handoffs or runs and does not infer a producer. `--input FILE` remains available for a new byte-for-byte import and defaults to `application/json`; `--input-media-type` is valid only with that file-import form. Even a descriptor-claimed `ready` exact-byte capsule currently stops before plan creation with `python_runtime_qualification_not_connected`: capsules remain inventory-only, and the new incomplete qualification registry is deliberately not a plan/run or execution-containment path.
+The caller remains responsible for constructing an honest phaseledger
+observation whose claim names the exact artifact ID, digest,
+`untrusted_exact_bytes`, and `authority_effect none`. Checks cannot reuse Trust
+Meter field names. `--input-artifact` selects one existing verified workspace
+artifact by its exact ID; it does not inspect `.ewb/handoffs` or infer a
+producer. `--input FILE` remains available for a new byte-for-byte import and
+defaults to `application/json`; `--input-media-type` is valid only with that
+file-import form. A verified not-granted admission lets planning continue past
+the capsule inventory blocker and then still stop on `enabled_by_default: false`
+and pin `fail_closed`. Residual containment blockers remain named; empty PATH
+or a Job Object is not an OS sandbox.
 
 ### StateWeaver candidate admission and future invocation (execution currently fails closed)
 
@@ -447,6 +499,9 @@ credentials.
 - [`contracts/native-delivery-qualification-v1.schema.json`](contracts/native-delivery-qualification-v1.schema.json)
 - [`contracts/python-runtime-qualification-v1.schema.json`](contracts/python-runtime-qualification-v1.schema.json)
 - [`contracts/python-runtime-qualification-record-v1.schema.json`](contracts/python-runtime-qualification-record-v1.schema.json)
+- [`contracts/python-runtime-execution-admission-v1.schema.json`](contracts/python-runtime-execution-admission-v1.schema.json)
+- [`contracts/python-runtime-execution-admission-record-v1.schema.json`](contracts/python-runtime-execution-admission-record-v1.schema.json)
+- [`contracts/phaseledger-caller-observation-v1.schema.json`](contracts/phaseledger-caller-observation-v1.schema.json)
 - [`contracts/build-identity-v1.schema.json`](contracts/build-identity-v1.schema.json)
 - [`contracts/ewb-cli-envelope-v1.schema.json`](contracts/ewb-cli-envelope-v1.schema.json)
 - [`contracts/evidence-handoff-v1.schema.json`](contracts/evidence-handoff-v1.schema.json)

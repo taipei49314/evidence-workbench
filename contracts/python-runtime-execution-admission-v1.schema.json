@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Workbench Python runtime execution admission v1",
+  "description": "Sibling of python_runtime_qualification/v1. Cites an incomplete inventory record and records independent execution-admission checks. This version cannot grant execution admission or authority. Residual OS-containment checks cannot be marked satisfied.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "observed_at", "inventory_qualification_ref", "tool_ref",
+    "upstream_pin_ref", "operation", "recorder_identity", "platform_observation",
+    "checks", "admission_state", "authority_effect"
+  ],
+  "properties": {
+    "schema_version": { "const": "python_runtime_execution_admission/v1" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "inventory_qualification_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["qualification_id", "record_digest"],
+      "properties": {
+        "qualification_id": { "type": "string", "pattern": "^qualification_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "tool_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_id", "manifest_sha256"],
+      "properties": {
+        "manifest_id": { "$ref": "#/$defs/tool_id" },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "upstream_pin_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_manifest_id", "pin_sha256"],
+      "properties": {
+        "tool_manifest_id": { "$ref": "#/$defs/tool_id" },
+        "pin_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "operation": { "enum": ["trust_meter_measure", "phaseledger_measure"] },
+    "recorder_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "executable_sha256"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "executable_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "platform_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "host"],
+      "properties": {
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "arch", "abi"],
+          "properties": {
+            "os": { "const": "windows" },
+            "arch": { "const": "x86_64" },
+            "abi": { "$ref": "#/$defs/platform_component" }
+          }
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "arch"],
+          "properties": {
+            "os": { "const": "windows" },
+            "arch": { "const": "x86_64" }
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "prefixItems": [
+        { "$ref": "#/$defs/check_cpython_archive_semantics" },
+        { "$ref": "#/$defs/check_os_network_egress_denial" },
+        { "$ref": "#/$defs/check_python_active_process_limit_one" },
+        { "$ref": "#/$defs/check_python_creation_time_job_assignment" },
+        { "$ref": "#/$defs/check_python_launch_harness" },
+        { "$ref": "#/$defs/check_python_path_configuration_isolation" },
+        { "$ref": "#/$defs/check_python_private_materialization" },
+        { "$ref": "#/$defs/check_wheel_record_closure" }
+      ],
+      "items": false
+    },
+    "admission_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "blocker_codes"],
+      "properties": {
+        "state": { "const": "not_granted" },
+        "blocker_codes": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "authority_effect": { "const": "none" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "tool_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+    },
+    "platform_component": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9_.-]{0,62}[a-z0-9])?$"
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "state", "evidence_refs"],
+      "properties": {
+        "code": { "$ref": "#/$defs/identifier" },
+        "state": { "enum": ["satisfied", "not_implemented", "failed"] },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact_ref" }
+        }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "record_digest"],
+      "properties": {
+        "artifact_id": { "type": "string", "pattern": "^artifact_[0-9a-f]{32}$" },
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "implementable_check": {
+      "allOf": [{ "$ref": "#/$defs/check" }]
+    },
+    "residual_containment_check": {
+      "allOf": [
+        { "$ref": "#/$defs/check" },
+        { "properties": { "state": { "enum": ["not_implemented", "failed"] } } }
+      ]
+    },
+    "check_cpython_archive_semantics": {
+      "allOf": [
+        { "$ref": "#/$defs/implementable_check" },
+        { "properties": { "code": { "const": "cpython_archive_semantics" } } }
+      ]
+    },
+    "check_os_network_egress_denial": {
+      "allOf": [
+        { "$ref": "#/$defs/residual_containment_check" },
+        { "properties": { "code": { "const": "os_network_egress_denial" } } }
+      ]
+    },
+    "check_python_active_process_limit_one": {
+      "allOf": [
+        { "$ref": "#/$defs/residual_containment_check" },
+        { "properties": { "code": { "const": "python_active_process_limit_one" } } }
+      ]
+    },
+    "check_python_creation_time_job_assignment": {
+      "allOf": [
+        { "$ref": "#/$defs/residual_containment_check" },
+        { "properties": { "code": { "const": "python_creation_time_job_assignment" } } }
+      ]
+    },
+    "check_python_launch_harness": {
+      "allOf": [
+        { "$ref": "#/$defs/implementable_check" },
+        { "properties": { "code": { "const": "python_launch_harness" } } }
+      ]
+    },
+    "check_python_path_configuration_isolation": {
+      "allOf": [
+        { "$ref": "#/$defs/implementable_check" },
+        { "properties": { "code": { "const": "python_path_configuration_isolation" } } }
+      ]
+    },
+    "check_python_private_materialization": {
+      "allOf": [
+        { "$ref": "#/$defs/implementable_check" },
+        { "properties": { "code": { "const": "python_private_materialization" } } }
+      ]
+    },
+    "check_wheel_record_closure": {
+      "allOf": [
+        { "$ref": "#/$defs/implementable_check" },
+        { "properties": { "code": { "const": "wheel_record_closure" } } }
+      ]
+    }
+  }
+}

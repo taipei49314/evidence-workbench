@@ -1,8 +1,9 @@
 use crate::contracts::{
     AuditReceipt, AuditTopology, CapsuleClosureState, CapsuleReadinessState, ContractArtifactRef,
-    Digest, EvidenceHandoff, IdeHandoff, PlanRecordRef, PlatformAssumptionState,
-    PythonRuntimeQualification, PythonRuntimeQualificationRecord, RunRecordRef, RuntimeCapsule,
-    SubjectCandidate,
+    Digest, EvidenceHandoff, IdeHandoff, PhaseledgerCallerObservation, PlanRecordRef,
+    PlatformAssumptionState, PythonRuntimeExecutionAdmission,
+    PythonRuntimeExecutionAdmissionRecord, PythonRuntimeQualification,
+    PythonRuntimeQualificationRecord, RunRecordRef, RuntimeCapsule, SubjectCandidate,
 };
 use crate::strict_json;
 use anyhow::{Context, Result, bail};
@@ -49,6 +50,38 @@ pub fn parse_python_runtime_qualification_record(
         bail!("Python runtime qualification record typed payload digest mismatch");
     }
     Ok(record)
+}
+
+pub fn parse_python_runtime_execution_admission(
+    bytes: &[u8],
+) -> Result<PythonRuntimeExecutionAdmission> {
+    let admission = parse_contract(bytes, "Python runtime execution admission")?;
+    crate::python_admissions::validate_payload(&admission)?;
+    Ok(admission)
+}
+
+pub fn parse_python_runtime_execution_admission_record(
+    bytes: &[u8],
+) -> Result<PythonRuntimeExecutionAdmissionRecord> {
+    let record: PythonRuntimeExecutionAdmissionRecord =
+        parse_contract(bytes, "Python runtime execution admission record")?;
+    if record.schema_version != "python_runtime_execution_admission_record/v1" {
+        bail!("unsupported Python runtime execution admission record schema");
+    }
+    validate_prefixed_id(&record.admission_id, "admission_", "Python execution admission id")?;
+    validate_sha256(&record.record_digest, "Python execution admission record")?;
+    crate::python_admissions::validate_payload(&record.payload)?;
+    let actual = hex::encode(Sha256::digest(serde_json::to_vec(&record.payload)?));
+    if actual != record.record_digest {
+        bail!("Python execution admission record typed payload digest mismatch");
+    }
+    Ok(record)
+}
+
+pub fn parse_phaseledger_caller_observation(bytes: &[u8]) -> Result<PhaseledgerCallerObservation> {
+    let observation = parse_contract(bytes, "Phaseledger caller observation")?;
+    crate::caller_observations::validate(&observation)?;
+    Ok(observation)
 }
 
 pub fn parse_ide_handoff(bytes: &[u8]) -> Result<IdeHandoff> {
@@ -787,6 +820,14 @@ mod tests {
         include_bytes!("../contracts/examples/python-runtime-qualification-v1.example.json");
     const PYTHON_QUALIFICATION_RECORD_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/python-runtime-qualification-record-v1.example.json");
+    const PYTHON_ADMISSION_EXAMPLE: &[u8] = include_bytes!(
+        "../contracts/examples/python-runtime-execution-admission-v1.example.json"
+    );
+    const PYTHON_ADMISSION_RECORD_EXAMPLE: &[u8] = include_bytes!(
+        "../contracts/examples/python-runtime-execution-admission-record-v1.example.json"
+    );
+    const PHASELEDGER_CALLER_OBSERVATION_EXAMPLE: &[u8] =
+        include_bytes!("../contracts/examples/phaseledger-caller-observation-v1.example.json");
     const HANDOFF_EXAMPLE: &[u8] =
         include_bytes!("../contracts/examples/ide-handoff-v1.example.json");
     const EVIDENCE_HANDOFF_EXAMPLE: &[u8] =
@@ -810,6 +851,12 @@ mod tests {
             .expect("valid incomplete Python runtime qualification example");
         parse_python_runtime_qualification_record(PYTHON_QUALIFICATION_RECORD_EXAMPLE)
             .expect("valid incomplete Python runtime qualification record example");
+        parse_python_runtime_execution_admission(PYTHON_ADMISSION_EXAMPLE)
+            .expect("valid not-granted Python execution admission example");
+        parse_python_runtime_execution_admission_record(PYTHON_ADMISSION_RECORD_EXAMPLE)
+            .expect("valid not-granted Python execution admission record example");
+        parse_phaseledger_caller_observation(PHASELEDGER_CALLER_OBSERVATION_EXAMPLE)
+            .expect("valid Phaseledger caller observation example");
         parse_ide_handoff(HANDOFF_EXAMPLE).expect("valid IDE handoff example");
         parse_evidence_handoff(EVIDENCE_HANDOFF_EXAMPLE).expect("valid evidence handoff example");
         let record_value = strict_json::parse_strict(EVIDENCE_HANDOFF_RECORD_EXAMPLE)
@@ -1450,6 +1497,9 @@ mod tests {
             include_str!("../contracts/runtime-capsule-v1.schema.json"),
             include_str!("../contracts/python-runtime-qualification-v1.schema.json"),
             include_str!("../contracts/python-runtime-qualification-record-v1.schema.json"),
+            include_str!("../contracts/python-runtime-execution-admission-v1.schema.json"),
+            include_str!("../contracts/python-runtime-execution-admission-record-v1.schema.json"),
+            include_str!("../contracts/phaseledger-caller-observation-v1.schema.json"),
             include_str!("../contracts/native-delivery-qualification-v1.schema.json"),
             include_str!("../contracts/ide-handoff-v1.schema.json"),
             include_str!("../contracts/evidence-handoff-v1.schema.json"),
@@ -1472,6 +1522,7 @@ mod tests {
         .unwrap();
         let parsed: crate::contracts::InstrumentRun = serde_json::from_value(run.clone()).unwrap();
         assert!(parsed.native_qualification_ref.is_none());
+        assert!(parsed.python_admission_ref.is_none());
 
         let mut missing_native = run.clone();
         missing_native
@@ -1500,6 +1551,7 @@ mod tests {
             "tool_ref": run["tool_ref"].clone(),
             "upstream_pin_ref": run["upstream_pin_ref"].clone(),
             "native_qualification_ref": null,
+            "python_admission_ref": null,
             "resolved_tool_identity": run["resolved_tool_identity"].clone(),
             "recorder_identity": run["recorder_identity"].clone(),
             "adapter": run["adapter"].clone(),
@@ -1510,10 +1562,20 @@ mod tests {
         });
         let parsed: crate::contracts::PlanPayload = serde_json::from_value(plan.clone()).unwrap();
         assert!(parsed.native_qualification_ref.is_none());
+        assert!(parsed.python_admission_ref.is_none());
         plan.as_object_mut()
             .unwrap()
             .remove("native_qualification_ref");
         assert!(serde_json::from_value::<crate::contracts::PlanPayload>(plan).is_err());
+
+        let mut missing_python = run.clone();
+        missing_python
+            .as_object_mut()
+            .unwrap()
+            .remove("python_admission_ref");
+        assert!(
+            serde_json::from_value::<crate::contracts::InstrumentRun>(missing_python).is_err()
+        );
     }
 
     fn assert_objects_are_closed(value: &Value) {

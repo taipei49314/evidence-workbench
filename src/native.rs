@@ -198,6 +198,7 @@ pub struct ExecutionRequest {
     pub tool_ref: ToolRef,
     pub upstream_pin_ref: UpstreamPinRef,
     pub native_qualification_ref: Option<NativeQualificationRef>,
+    pub python_admission_ref: Option<crate::contracts::PythonAdmissionRef>,
     pub identity: BinaryIdentity,
     pub recorder: RecorderIdentity,
     pub adapter: AdapterIdentity,
@@ -595,20 +596,15 @@ pub fn build_invocation(
         }
         "trust_meter_measure" => {
             let root = git_subject::root(subject)?;
-            argv.extend([
-                root.display().to_string(),
-                "--json".to_owned(),
-                "--threshold".to_owned(),
+            argv.extend(trust_meter_machine_argv(
+                &root,
                 parameters
                     .get("threshold")
-                    .cloned()
                     .ok_or_else(|| anyhow::anyhow!("threshold missing after validation"))?,
-                "--phase".to_owned(),
                 parameters
                     .get("phase")
-                    .cloned()
                     .ok_or_else(|| anyhow::anyhow!("phase missing after validation"))?,
-            ]);
+            )?);
             root
         }
         "phaseledger_measure" => {
@@ -660,6 +656,25 @@ pub fn build_invocation(
     })
 }
 
+pub fn trust_meter_machine_argv(
+    root: &Path,
+    threshold: &str,
+    phase: &str,
+) -> Result<Vec<String>> {
+    if threshold.is_empty() || phase.is_empty() {
+        bail!("trust-meter machine invocation requires threshold and phase");
+    }
+    Ok(vec![
+        root.display().to_string(),
+        "--json-v1".to_owned(),
+        "--no-config".to_owned(),
+        "--threshold".to_owned(),
+        threshold.to_owned(),
+        "--phase".to_owned(),
+        phase.to_owned(),
+    ])
+}
+
 pub fn validate_capability_approval(invocation: &Invocation, allowed: &[String]) -> Result<()> {
     let required: BTreeSet<_> = invocation.required_capabilities.iter().cloned().collect();
     let mut approved = BTreeSet::new();
@@ -692,6 +707,7 @@ pub fn execute(
         tool_ref,
         upstream_pin_ref,
         native_qualification_ref,
+        python_admission_ref,
         identity,
         recorder,
         adapter,
@@ -789,6 +805,7 @@ pub fn execute(
         tool_ref,
         upstream_pin_ref,
         native_qualification_ref,
+        python_admission_ref,
         resolved_tool_identity: identity,
         recorder_identity: recorder,
         adapter,
@@ -1810,5 +1827,57 @@ mod tests {
         let status = child.wait().unwrap();
         assert!(job.is_ok(), "{}", job.err().unwrap());
         assert!(status.success());
+    }
+
+    #[test]
+    fn trust_meter_machine_argv_is_json_v1_and_no_config() {
+        let root = PathBuf::from("C:/subject");
+        let argv = super::trust_meter_machine_argv(&root, "75", "preflight").unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "C:/subject",
+                "--json-v1",
+                "--no-config",
+                "--threshold",
+                "75",
+                "--phase",
+                "preflight"
+            ]
+        );
+        assert!(!argv.iter().any(|part| part == "--json"));
+        assert!(!argv.iter().any(|part| part == "--config"));
+        assert!(!argv.iter().any(|part| part.contains("trust-meter.toml")));
+    }
+
+    #[test]
+    fn trust_meter_machine_argv_rejects_empty_isolation_inputs() {
+        let root = PathBuf::from("C:/subject");
+        assert!(super::trust_meter_machine_argv(&root, "", "preflight").is_err());
+        assert!(super::trust_meter_machine_argv(&root, "75", "").is_err());
+    }
+
+    #[test]
+    fn trust_meter_machine_argv_ignores_ancestor_trust_meter_toml() {
+        let temporary = tempfile::tempdir().unwrap();
+        let subject = temporary.path().join("repo");
+        std::fs::create_dir_all(&subject).unwrap();
+        std::fs::write(
+            temporary.path().join(".trust-meter.toml"),
+            "[trust-meter]\nthreshold = 1\nphase_gate = \"ambient\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            subject.join(".trust-meter.toml"),
+            "[trust-meter]\nthreshold = 9\nphase_gate = \"nested\"\n",
+        )
+        .unwrap();
+        let argv = super::trust_meter_machine_argv(&subject, "75", "preflight").unwrap();
+        assert_eq!(argv[1], "--json-v1");
+        assert_eq!(argv[2], "--no-config");
+        assert_eq!(argv[4], "75");
+        assert_eq!(argv[6], "preflight");
+        assert!(!argv.iter().any(|part| part.contains(".trust-meter.toml")));
+        assert!(!argv.iter().any(|part| part == "ambient" || part == "nested"));
     }
 }

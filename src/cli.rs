@@ -3,7 +3,8 @@ use crate::contracts::{
 };
 use crate::{
     build_identity, candidate_pins, evidence_handoffs, git_subject, manifests, native,
-    native_qualifications, python_qualifications, runtime_capsules, subject_candidates,
+    native_qualifications, python_admissions, python_qualifications, runtime_capsules,
+    subject_candidates,
     upstream_pins, workspace,
 };
 use anyhow::{Context, Result, bail};
@@ -51,6 +52,8 @@ pub enum Command {
     Qualifications(QualificationsCommand),
     /// Create incomplete Python runtime qualification records without executing Python.
     PythonQualifications(PythonQualificationsCommand),
+    /// Record not-granted Python execution-admission bindings without enabling adapters.
+    PythonAdmissions(PythonAdmissionsCommand),
     /// Import and inspect untrusted exact-byte GitHub discovery candidates.
     Candidates(CandidatesCommand),
     /// Inspect stored execution plans without launching native tools.
@@ -203,6 +206,27 @@ pub enum PythonQualificationsSubcommand {
     Verify { qualification_id: String },
 }
 
+#[derive(Debug, Args)]
+pub struct PythonAdmissionsCommand {
+    #[command(subcommand)]
+    pub command: PythonAdmissionsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PythonAdmissionsSubcommand {
+    /// Bind a verified incomplete inventory record into a not-granted admission.
+    Admit {
+        #[arg(long, value_name = "QUALIFICATION_ID")]
+        inventory_qualification: String,
+    },
+    /// List only after re-verifying every admission, inventory, and CAS object.
+    List,
+    /// Show one admission only after re-verifying every reference and CAS object.
+    Show { admission_id: String },
+    /// Re-verify the typed payload digest, inventory citation, and not_granted state.
+    Verify { admission_id: String },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum CandidatesSubcommand {
     /// Import exact subject-candidate/v1 bytes bound to an existing source artifact.
@@ -277,6 +301,9 @@ pub enum RunsSubcommand {
         /// Durable local native-delivery qualification required by qualified native operations.
         #[arg(long, value_name = "QUALIFICATION_ID")]
         runtime_qualification: Option<String>,
+        /// Sibling Python execution-admission record. Does not grant planning while not_granted.
+        #[arg(long, value_name = "ADMISSION_ID")]
+        python_admission: Option<String>,
     },
     /// Execute a previously reviewed plan after explicit capability approval.
     Execute {
@@ -367,6 +394,7 @@ pub fn dispatch(cli: &Cli) -> Result<CommandOutcome> {
         Command::Capsules(command) => capsules(cli, command),
         Command::Qualifications(command) => qualifications(cli, command),
         Command::PythonQualifications(command) => python_qualifications(cli, command),
+        Command::PythonAdmissions(command) => python_admissions(cli, command),
         Command::Candidates(command) => candidates(cli, command),
         Command::Plans(command) => plans(cli, command),
         Command::Runs(command) => runs(cli, command),
@@ -666,6 +694,33 @@ fn python_qualifications(
     }
 }
 
+fn python_admissions(cli: &Cli, command: &PythonAdmissionsCommand) -> Result<CommandOutcome> {
+    let workspace = open_workspace(cli)?;
+    match &command.command {
+        PythonAdmissionsSubcommand::Admit {
+            inventory_qualification,
+        } => success(
+            "python-admissions.admit",
+            serde_json::to_value(python_admissions::admit(
+                &workspace,
+                inventory_qualification,
+            )?)?,
+        ),
+        PythonAdmissionsSubcommand::List => success(
+            "python-admissions.list",
+            serde_json::to_value(python_admissions::list_verified(&workspace)?)?,
+        ),
+        PythonAdmissionsSubcommand::Show { admission_id } => success(
+            "python-admissions.show",
+            serde_json::to_value(python_admissions::load_verified(&workspace, admission_id)?)?,
+        ),
+        PythonAdmissionsSubcommand::Verify { admission_id } => success(
+            "python-admissions.verify",
+            serde_json::to_value(python_admissions::verify(&workspace, admission_id)?)?,
+        ),
+    }
+}
+
 fn candidates(cli: &Cli, command: &CandidatesCommand) -> Result<CommandOutcome> {
     let workspace = open_workspace(cli)?;
     match &command.command {
@@ -715,14 +770,21 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
             timeout_ms,
             runtime_capsule,
             runtime_qualification,
+            python_admission,
         } => {
             let manifest = manifests::get(tool)?;
-            if manifest.manifest.manifest_id == "phaseledger"
-                && manifest
-                    .manifest
-                    .identity_contract
-                    .python_distribution
-                    .is_some()
+            if let Some(admission_id) = python_admission.as_deref() {
+                python_admissions::reject_inventory_as_admission(admission_id)?;
+            }
+            let python_admission_ref = python_admissions::bind_for_plan(
+                &workspace,
+                python_admission.as_deref(),
+                &manifest.manifest.manifest_id,
+                &manifest.manifest.invocation_contract.operation,
+            )?;
+            if python_admissions::ALLOWED_OPERATIONS.contains(
+                &manifest.manifest.invocation_contract.operation.as_str(),
+            ) && python_admission_ref.is_none()
             {
                 runtime_capsules::planning_blocker(
                     &workspace,
@@ -732,7 +794,7 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
                 )?;
                 unreachable!("Python planning blocker always fails closed");
             }
-            if runtime_capsule.is_some() {
+            if runtime_capsule.is_some() && manifest.manifest.manifest_id != "phaseledger" {
                 bail!(
                     "--runtime-capsule planning inspection is currently restricted to phaseledger"
                 );
@@ -815,6 +877,7 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
                     pin_sha256: upstream.sha256,
                 },
                 native_qualification_ref,
+                python_admission_ref,
                 resolved_tool_identity: identity,
                 recorder_identity: recorder,
                 adapter,
@@ -876,6 +939,7 @@ fn runs(cli: &Cli, command: &RunsCommand) -> Result<CommandOutcome> {
                     tool_ref: plan.payload.tool_ref,
                     upstream_pin_ref: plan.payload.upstream_pin_ref,
                     native_qualification_ref: plan.payload.native_qualification_ref,
+                    python_admission_ref: plan.payload.python_admission_ref,
                     identity,
                     recorder,
                     adapter,
