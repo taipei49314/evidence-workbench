@@ -1480,6 +1480,34 @@ fn python_qualification_cli_binds_exact_inventory_but_never_plans_or_executes() 
         "not_granted"
     );
     assert_eq!(admitted["data"]["payload"]["authority_effect"], "none");
+    let check_state = |code: &str| {
+        admitted["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["code"] == code)
+            .unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(check_state("cpython_archive_semantics"), "failed");
+    assert_eq!(check_state("wheel_record_closure"), "failed");
+    assert_eq!(check_state("python_launch_harness"), "satisfied");
+    assert_eq!(
+        check_state("python_path_configuration_isolation"),
+        "satisfied"
+    );
+    assert_eq!(check_state("python_private_materialization"), "satisfied");
+    assert_eq!(check_state("os_network_egress_denial"), "not_implemented");
+    assert_eq!(
+        check_state("python_active_process_limit_one"),
+        "not_implemented"
+    );
+    assert_eq!(
+        check_state("python_creation_time_job_assignment"),
+        "not_implemented"
+    );
     let admission_id = admitted["data"]["admission_id"].as_str().unwrap();
     let (code, verified, stderr) = run_json(
         production_ewb()
@@ -1552,6 +1580,315 @@ fn python_qualification_cli_binds_exact_inventory_but_never_plans_or_executes() 
             .unwrap()
             .contains("exact artifact binding changed")
     );
+}
+
+#[cfg(windows)]
+fn write_deflated_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Cursor;
+    use zip::write::SimpleFileOptions;
+    let mut cursor = Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut cursor);
+        for (name, bytes) in files {
+            writer
+                .start_file(
+                    *name,
+                    SimpleFileOptions::default()
+                        .compression_method(zip::CompressionMethod::Deflated),
+                )
+                .unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+    cursor.into_inner()
+}
+
+#[cfg(windows)]
+fn sha256_urlsafe_nopad(bytes: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let digest = Sha256::digest(bytes);
+    let bytes = digest.as_slice();
+    let mut out = String::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let b0 = bytes[index];
+        let b1 = if index + 1 < bytes.len() {
+            bytes[index + 1]
+        } else {
+            0
+        };
+        let b2 = if index + 2 < bytes.len() {
+            bytes[index + 2]
+        } else {
+            0
+        };
+        let n = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
+        out.push(TABLE[((n >> 18) & 63) as usize] as char);
+        out.push(TABLE[((n >> 12) & 63) as usize] as char);
+        if index + 1 < bytes.len() {
+            out.push(TABLE[((n >> 6) & 63) as usize] as char);
+        }
+        if index + 2 < bytes.len() {
+            out.push(TABLE[(n & 63) as usize] as char);
+        }
+        index += 3;
+    }
+    out
+}
+
+#[cfg(windows)]
+#[test]
+fn python_admission_cli_satisfies_implementable_proofs_but_stays_not_granted() {
+    let temp = TempDir::new().unwrap();
+    init(temp.path());
+
+    let payload = b"print('phaseledger')\n";
+    let record = format!(
+        "pkg/__init__.py,sha256={},{}\n",
+        sha256_urlsafe_nopad(payload),
+        payload.len()
+    );
+    let wheel = write_deflated_zip(&[
+        ("pkg/__init__.py", payload.as_slice()),
+        ("pkg-1.0.dist-info/RECORD", record.as_bytes()),
+    ]);
+    let archive = write_deflated_zip(&[
+        ("python.exe", b"embed-launcher"),
+        ("python313.zip", b"stdlib-bytes"),
+    ]);
+    let path_configuration = b"python313.zip\nsite\n";
+    let launcher = b"embed-launcher";
+
+    let add_artifact = |name: &str, bytes: &[u8], role: &str| -> Value {
+        let path = temp.path().join(name);
+        fs::write(&path, bytes).unwrap();
+        let (code, value, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["artifacts", "add", "--file"])
+                .arg(&path)
+                .args(["--role", role]),
+        );
+        assert_eq!(code, 0, "{value:?} {stderr}");
+        value["data"].clone()
+    };
+    let archive_artifact = add_artifact("python-embed.zip", &archive, "runtime_input");
+    let wheel_artifact = add_artifact("phaseledger.whl", &wheel, "runtime_input");
+    let evidence = add_artifact(
+        "descriptor-claim.json",
+        br#"{"descriptor_claim":"ready"}"#,
+        "qualification_evidence",
+    );
+
+    let capsule_root = temp.path().join("python-capsule-root");
+    fs::create_dir_all(capsule_root.join("site/phaseledger-0.6.0.dist-info")).unwrap();
+    fs::write(capsule_root.join("python.exe"), launcher).unwrap();
+    fs::write(capsule_root.join("python313._pth"), path_configuration).unwrap();
+    fs::write(
+        capsule_root.join("site/phaseledger-0.6.0.dist-info/RECORD"),
+        record.as_bytes(),
+    )
+    .unwrap();
+
+    let capsule_id = "capsule_42424242424242424242424242424242";
+    let mut descriptor = json!({
+        "schema_version": "runtime-capsule/v1",
+        "capsule_id": capsule_id,
+        "platform": {"os":"windows","arch":"x86_64","abi":"cp313-win_amd64"},
+        "launcher": {
+            "kind": "interpreter",
+            "path": "python.exe",
+            "byte_length": launcher.len(),
+            "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(launcher))}
+        },
+        "supporting_files": [
+            {
+                "path": "python313._pth",
+                "role": "path_configuration",
+                "byte_length": path_configuration.len(),
+                "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(path_configuration))}
+            },
+            {
+                "path": "site/phaseledger-0.6.0.dist-info/RECORD",
+                "role": "installed_record",
+                "byte_length": record.len(),
+                "digest": {"algorithm":"sha256","value":hex::encode(Sha256::digest(record.as_bytes()))}
+            }
+        ],
+        "transitive_closure": {
+            "state": "complete",
+            "inventory_digest": {"algorithm":"sha256","value":"00".repeat(32)},
+            "declared_file_count": 2,
+            "inventoried_file_count": 2,
+            "missing_paths": []
+        },
+        "external_platform_assumptions": [],
+        "operation_scope": {
+            "tool_manifest_id": "phaseledger",
+            "operations": ["phaseledger_measure"]
+        },
+        "qualification_evidence": [{
+            "kind": "qualification_run",
+            "artifact_id": evidence["artifact_id"],
+            "digest": evidence["digest"],
+            "observed_at": "2026-08-16T00:00:00Z",
+            "scope": "descriptor-only readiness claim"
+        }],
+        "readiness": {"state":"ready","blocker_codes":[]},
+        "authority_effect": "none"
+    });
+    let parsed: RuntimeCapsule = serde_json::from_value(descriptor.clone()).unwrap();
+    descriptor["transitive_closure"]["inventory_digest"]["value"] = Value::String(
+        digest_serialized(&parsed.supporting_files).expect("digest supporting inventory"),
+    );
+    let descriptor_path = temp.path().join("python-runtime-capsule.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec_pretty(&descriptor).unwrap(),
+    )
+    .unwrap();
+    let (code, admitted_capsule, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["capsules", "admit", "--descriptor"])
+            .arg(&descriptor_path)
+            .arg("--root")
+            .arg(&capsule_root),
+    );
+    assert_eq!(code, 0, "{admitted_capsule:?} {stderr}");
+
+    let (code, created, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-qualifications",
+                "create",
+                "--capsule",
+                capsule_id,
+                "--cpython-archive-artifact",
+                archive_artifact["artifact_id"].as_str().unwrap(),
+                "--path-configuration",
+                "python313._pth",
+                "--wheel-artifact",
+                wheel_artifact["artifact_id"].as_str().unwrap(),
+                "--installed-record-path",
+                "site/phaseledger-0.6.0.dist-info/RECORD",
+            ]),
+    );
+    assert_eq!(code, 0, "{created:?} {stderr}");
+    let qualification_id = created["data"]["qualification_id"].as_str().unwrap();
+
+    let plans_before = fs::read_dir(temp.path().join(".ewb/plans"))
+        .unwrap()
+        .count();
+    let (code, admitted, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "python-admissions",
+                "admit",
+                "--inventory-qualification",
+                qualification_id,
+            ]),
+    );
+    assert_eq!(code, 0, "{admitted:?} {stderr}");
+    assert_eq!(
+        admitted["data"]["payload"]["admission_state"]["state"],
+        "not_granted"
+    );
+    let check_state = |code: &str| {
+        admitted["data"]["payload"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["code"] == code)
+            .unwrap()["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    for code in [
+        "cpython_archive_semantics",
+        "wheel_record_closure",
+        "python_launch_harness",
+        "python_path_configuration_isolation",
+        "python_private_materialization",
+    ] {
+        assert_eq!(check_state(code), "satisfied", "{code}");
+    }
+    for code in [
+        "os_network_egress_denial",
+        "python_active_process_limit_one",
+        "python_creation_time_job_assignment",
+    ] {
+        assert_eq!(check_state(code), "not_implemented", "{code}");
+    }
+    let admission_id = admitted["data"]["admission_id"].as_str().unwrap();
+    let (code, verified, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args(["python-admissions", "verify", admission_id]),
+    );
+    assert_eq!(code, 0, "{verified:?} {stderr}");
+    assert_eq!(verified["data"]["admission_state"], "not_granted");
+    assert_eq!(
+        verified["data"]["execution_admission"],
+        "not_granted_by_residual_python_containment_blockers"
+    );
+
+    let (code, still_blocked, stderr) = run_json(
+        production_ewb()
+            .args(["--json", "--workspace"])
+            .arg(temp.path())
+            .args([
+                "runs",
+                "plan",
+                "--tool",
+                "phaseledger",
+                "--python-admission",
+                admission_id,
+                "--input-artifact",
+                archive_artifact["artifact_id"].as_str().unwrap(),
+            ]),
+    );
+    assert_eq!(code, 2, "{still_blocked:?} {stderr}");
+    assert!(
+        still_blocked["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("disabled")
+            || still_blocked["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("fail_closed"),
+        "{still_blocked:?}"
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/plans"))
+            .unwrap()
+            .count(),
+        plans_before
+    );
+    for tool in ["trust-meter", "phaseledger"] {
+        let (code, shown, stderr) = run_json(
+            production_ewb()
+                .args(["--json", "--workspace"])
+                .arg(temp.path())
+                .args(["tools", "show", tool]),
+        );
+        assert_eq!(code, 0, "{shown:?} {stderr}");
+        assert_eq!(shown["data"]["manifest"]["enabled_by_default"], false);
+        assert_eq!(
+            shown["data"]["upstream_pin"]["execution_readiness"]["state"],
+            "fail_closed"
+        );
+    }
 }
 
 #[test]
@@ -3525,13 +3862,7 @@ fn fresh_workspace_vertical_slice_stops_before_native_execution() {
         ewb()
             .args(["--json", "--workspace"])
             .arg(temp.path())
-            .args([
-                "runs",
-                "plan",
-                "--tool",
-                "trust-meter",
-                "--subject",
-            ])
+            .args(["runs", "plan", "--tool", "trust-meter", "--subject"])
             .arg(&subject)
             .args(["--param", "threshold=75", "--param", "phase=preflight"]),
     );
@@ -3552,12 +3883,13 @@ fn fresh_workspace_vertical_slice_stops_before_native_execution() {
         "{tm_plan:?}"
     );
 
-    let observation = evidence_workbench::data_contract_validation::parse_phaseledger_caller_observation(
-        include_bytes!("../contracts/examples/phaseledger-caller-observation-v1.example.json"),
-    )
-    .unwrap();
-    let native = evidence_workbench::caller_observations::map_to_phaseledger_v1(&observation)
+    let observation =
+        evidence_workbench::data_contract_validation::parse_phaseledger_caller_observation(
+            include_bytes!("../contracts/examples/phaseledger-caller-observation-v1.example.json"),
+        )
         .unwrap();
+    let native =
+        evidence_workbench::caller_observations::map_to_phaseledger_v1(&observation).unwrap();
     assert!(native.get("advisory_gate_met").is_none());
     assert!(native.get("overall_score").is_none());
     assert!(native.get("threshold_met").is_none());
@@ -3572,17 +3904,21 @@ fn fresh_workspace_vertical_slice_stops_before_native_execution() {
         ewb()
             .args(["--json", "--workspace"])
             .arg(temp.path())
-            .args([
-                "artifacts",
-                "add",
-                "--file",
-            ])
+            .args(["artifacts", "add", "--file"])
             .arg(&observation_path)
-            .args(["--role", "handoff_input", "--media-type", "application/json"]),
+            .args([
+                "--role",
+                "handoff_input",
+                "--media-type",
+                "application/json",
+            ]),
     );
     assert_eq!(code, 0, "{imported:?} {stderr}");
     let artifact_id = imported["data"]["artifact_id"].as_str().unwrap();
-    let artifact_digest = imported["data"]["digest"]["value"].as_str().unwrap().to_owned();
+    let artifact_digest = imported["data"]["digest"]["value"]
+        .as_str()
+        .unwrap()
+        .to_owned();
 
     let handoffs = temp.path().join(".ewb/handoffs");
     let marker = handoffs.join("scanned.marker");
@@ -3609,8 +3945,16 @@ fn fresh_workspace_vertical_slice_stops_before_native_execution() {
     );
     assert!(!marker.exists());
     assert_eq!(fs::read_dir(&handoffs).unwrap().count(), 0);
-    assert_eq!(fs::read_dir(temp.path().join(".ewb/plans")).unwrap().count(), 0);
-    assert_eq!(fs::read_dir(temp.path().join(".ewb/runs")).unwrap().count(), 0);
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/plans"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join(".ewb/runs")).unwrap().count(),
+        0
+    );
 
     let (code, doctor, stderr) = run_json(
         ewb()

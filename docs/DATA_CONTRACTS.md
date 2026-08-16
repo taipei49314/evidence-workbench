@@ -114,7 +114,11 @@ inventory qualification. It cites one `python_runtime_qualification_record/v1`
 by ID and caller-retained digest, binds one allowlisted operation
 (`trust_meter_measure` or `phaseledger_measure`), and records the same eight
 check codes. Implementable checks may be `satisfied`, `not_implemented`, or
-`failed`. Residual containment checks
+`failed`. `python-admissions admit` now proves the five implementable
+checks from exact CAS bytes without spawning Python: CPython zip
+semantics, wheel/RECORD closure, isolated `_pth` grammar, the fixed
+launch contract plus embedded wrapper digest, and a disposable private
+materialization with pre/post inventory. Residual containment checks
 (`os_network_egress_denial`, `python_active_process_limit_one`,
 `python_creation_time_job_assignment`) cannot be `satisfied`. The only
 admission state is `not_granted`, and `authority_effect` is `none`. Inventory
