@@ -390,8 +390,8 @@ fn create_appcontainer_profile(name: &str) -> Result<AppContainerProfile> {
 fn grant_appcontainer_access(path: &Path, sid: windows_sys::Win32::Security::PSID) -> Result<()> {
     use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
     use windows_sys::Win32::Security::Authorization::{
-        EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, SE_FILE_OBJECT,
-        SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
+        EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, SE_FILE_OBJECT, SetEntriesInAclW,
+        SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
     };
     use windows_sys::Win32::Security::{
         ACL, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, OBJECT_INHERIT_ACE,
@@ -473,8 +473,8 @@ fn spawn_suspended_in_appcontainer(
 ) -> Result<SpawnedProcess> {
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::System::Threading::{
-        CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
-        EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION, STARTUPINFOEXW,
+        CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, EXTENDED_STARTUPINFO_PRESENT,
+        PROCESS_INFORMATION, STARTUPINFOEXW,
     };
 
     let mut application = wide_z(launcher);
@@ -514,9 +514,7 @@ fn spawn_suspended_in_appcontainer(
 #[cfg(windows)]
 fn process_is_appcontainer(process: windows_sys::Win32::Foundation::HANDLE) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::Security::{
-        GetTokenInformation, TOKEN_QUERY, TokenIsAppContainer,
-    };
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenIsAppContainer};
     use windows_sys::Win32::System::Threading::OpenProcessToken;
 
     let mut token = std::ptr::null_mut();
@@ -546,11 +544,7 @@ fn process_exit_code(process: windows_sys::Win32::Foundation::HANDLE) -> u32 {
     use windows_sys::Win32::System::Threading::GetExitCodeProcess;
     let mut exit_code = 1u32;
     let queried = unsafe { GetExitCodeProcess(process, &mut exit_code) };
-    if queried == 0 {
-        1
-    } else {
-        exit_code
-    }
+    if queried == 0 { 1 } else { exit_code }
 }
 
 #[cfg(windows)]
@@ -591,12 +585,7 @@ fn wide_z(path: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
 }
 
 #[cfg(windows)]
-fn environment_block(
-    empty_path: &Path,
-    temp: &Path,
-    marker: &Path,
-    port: u16,
-) -> Result<Vec<u16>> {
+fn environment_block(empty_path: &Path, temp: &Path, marker: &Path, port: u16) -> Result<Vec<u16>> {
     use std::os::windows::ffi::OsStrExt;
     let system_root = windows_directory()?;
     let system_drive = system_root

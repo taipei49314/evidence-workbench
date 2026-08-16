@@ -1880,12 +1880,7 @@ fn python_admission_cli_satisfies_implementable_proofs_but_stays_not_granted() {
         production_ewb()
             .args(["--json", "--workspace"])
             .arg(temp.path())
-            .args([
-                "python-admissions",
-                "prove-network",
-                "--admission",
-                v2_id,
-            ]),
+            .args(["python-admissions", "prove-network", "--admission", v2_id]),
     );
     assert_eq!(code, 0, "{networked:?} {stderr}");
     assert_eq!(networked["command"], "python-admissions.prove-network");
@@ -4372,7 +4367,7 @@ fn trust_meter_and_phaseledger_stay_disabled_and_fail_closed() {
             .iter()
             .map(|entry| entry["selector"].as_str().unwrap())
             .collect::<Vec<_>>();
-        assert!(!selectors.iter().any(|selector| *selector == "/passed"));
+        assert!(!selectors.contains(&"/passed"));
         let (code, probe, stderr) = run_json(
             ewb()
                 .args(["--json", "--workspace"])

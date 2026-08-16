@@ -656,11 +656,7 @@ pub fn build_invocation(
     })
 }
 
-pub fn trust_meter_machine_argv(
-    root: &Path,
-    threshold: &str,
-    phase: &str,
-) -> Result<Vec<String>> {
+pub fn trust_meter_machine_argv(root: &Path, threshold: &str, phase: &str) -> Result<Vec<String>> {
     if threshold.is_empty() || phase.is_empty() {
         bail!("trust-meter machine invocation requires threshold and phase");
     }
@@ -1878,6 +1874,10 @@ mod tests {
         assert_eq!(argv[4], "75");
         assert_eq!(argv[6], "preflight");
         assert!(!argv.iter().any(|part| part.contains(".trust-meter.toml")));
-        assert!(!argv.iter().any(|part| part == "ambient" || part == "nested"));
+        assert!(
+            !argv
+                .iter()
+                .any(|part| part == "ambient" || part == "nested")
+        );
     }
 }
