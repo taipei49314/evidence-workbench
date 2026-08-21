@@ -8,10 +8,11 @@ updates:
       actions:
         patterns: ["*"]
   - package-ecosystem: "cargo"
-    directory: "/"
+    directories:
+      - "/"
+      - "/tests/harness"
     schedule:
       interval: "weekly"
     groups:
-      minor-and-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+      synchronized-dependencies:
+        group-by: "dependency-name"
