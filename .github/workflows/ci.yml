@@ -35,6 +35,12 @@ jobs:
       - name: Select Rust toolchain
         shell: pwsh
         run: rustup default stable
+      - name: Verify harness dependency graph synchronization
+        shell: pwsh
+        run: ./tests/support/check-harness-dependency-sync.ps1
+      - name: Regression-test root-only dependency drift
+        shell: pwsh
+        run: ./tests/support/check-harness-dependency-sync-regression.ps1
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Lint all targets
@@ -88,6 +94,9 @@ jobs:
       - name: Select Rust 1.85 toolchain
         shell: pwsh
         run: rustup default 1.85.0
+      - name: Verify harness dependency graph synchronization
+        shell: pwsh
+        run: ./tests/support/check-harness-dependency-sync.ps1
       - name: Test production crate on MSRV
         run: cargo test --locked --all-targets --all-features
       - name: Test excluded execution-boundary harness on MSRV
